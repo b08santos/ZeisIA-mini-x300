@@ -1,0 +1,6 @@
+{
+  "name": "Zoom IA",
+  "description": "Câmera pessoal offline com zoom híbrido até 100x e super-resolução por inteligência artificial no aparelho.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -24,6 +24,11 @@ enum class FlashModeOption {
   OFF,
 }
 
+enum class CaptureMode {
+  PHOTO,
+  VIDEO,
+}
+
 data class PipelineTelemetry(
   val totalZoom: Float,
   val hardwareZoom: Float,
@@ -54,6 +59,8 @@ data class SavedPhotoItem(
   val dateAddedMillis: Long,
   val width: Int,
   val height: Int,
+  val isVideo: Boolean = false,
+  val durationMs: Long = 0L,
 )
 
 object ZoomMath {
@@ -113,5 +120,13 @@ object ZoomMath {
       }
       else -> "${zoom.roundToInt()}x"
     }
+  }
+
+  fun toEquivalentFocalMm(zoom: Float): Int {
+    return (zoom.coerceAtLeast(0.5f) * 24f).roundToInt()
+  }
+
+  fun formatFocalMmLabel(zoom: Float): String {
+    return "${toEquivalentFocalMm(zoom)}mm"
   }
 }

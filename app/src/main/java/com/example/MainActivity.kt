@@ -175,6 +175,13 @@ fun ZoomIAApp(viewModel: ZoomCameraViewModel = viewModel()) {
             CameraViewfinderScreen(
               uiState = uiState,
               onHardwareZoomBoundsChanged = viewModel::updateHardwareZoomBounds,
+              onSamsungExtensionStatus = viewModel::onSamsungExtensionStatus,
+              onVideoQualityDetected = viewModel::onVideoQualityDetected,
+              onCreateVideoOutputOptions = viewModel::createVideoOutputOptions,
+              onVideoRecordingStarted = viewModel::onVideoRecordingStarted,
+              onVideoRecordingProgress = viewModel::onVideoRecordingProgress,
+              onVideoRecordingFinalized = viewModel::onVideoRecordingFinalized,
+              onCaptureModeChanged = viewModel::setCaptureMode,
               onZoomChanged = viewModel::setTargetZoom,
               onMultiplyZoom = viewModel::multiplyZoom,
               onToggleLens = viewModel::toggleLensFacing,

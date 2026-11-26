@@ -59,10 +59,22 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.os.Build
+import android.util.Size
+import androidx.compose.foundation.Image
+import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.outlined.Videocam
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.asImageBitmap
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.UserSettings
 import com.example.domain.SavedPhotoItem
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.ui.theme.CoralError
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.InkMuted
@@ -237,14 +249,75 @@ fun GalleryScreen(
               .clip(RoundedCornerShape(14.dp))
               .background(ObsidianSurfaceHigh)
               .border(1.dp, OpticalBorder, RoundedCornerShape(14.dp))
-              .clickable { inspectedPhoto = photo },
+              .clickable {
+                if (photo.isVideo) {
+                  val playIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(photo.uri, "video/mp4")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                  }
+                  runCatching {
+                    context.startActivity(playIntent)
+                  }
+                } else {
+                  inspectedPhoto = photo
+                }
+              },
           ) {
-            AsyncImage(
-              model = photo.uri,
-              contentDescription = photo.displayName,
-              contentScale = ContentScale.Crop,
-              modifier = Modifier.fillMaxSize(),
-            )
+            if (photo.isVideo) {
+              val videoThumb by produceState<Bitmap?>(initialValue = null, key1 = photo.uri) {
+                value = withContext(Dispatchers.IO) {
+                  runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                      context.contentResolver.loadThumbnail(photo.uri, Size(360, 360), null)
+                    } else {
+                      val retriever = MediaMetadataRetriever()
+                      try {
+                        retriever.setDataSource(context, photo.uri)
+                        retriever.getFrameAtTime(0L)
+                      } finally {
+                        retriever.release()
+                      }
+                    }
+                  }.getOrNull()
+                }
+              }
+              val thumb = videoThumb
+              if (thumb != null) {
+                Image(
+                  bitmap = thumb.asImageBitmap(),
+                  contentDescription = photo.displayName,
+                  contentScale = ContentScale.Crop,
+                  modifier = Modifier.fillMaxSize(),
+                )
+              } else {
+                Box(
+                  modifier = Modifier.fillMaxSize(),
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Icon(
+                    imageVector = Icons.Outlined.Videocam,
+                    contentDescription = photo.displayName,
+                    tint = InkMuted,
+                    modifier = Modifier.size(32.dp),
+                  )
+                }
+              }
+              Icon(
+                imageVector = Icons.Outlined.PlayCircle,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier
+                  .size(38.dp)
+                  .align(Alignment.Center),
+              )
+            } else {
+              AsyncImage(
+                model = photo.uri,
+                contentDescription = photo.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+              )
+            }
             Surface(
               color = ObsidianBg.copy(alpha = 0.78f),
               shape = RoundedCornerShape(6.dp),
@@ -252,14 +325,20 @@ fun GalleryScreen(
                 .align(Alignment.BottomStart)
                 .padding(6.dp),
             ) {
-              Text(
-                text = photo.displayName
+              val badgeText = if (photo.isVideo) {
+                val secs = (photo.durationMs / 1000L).coerceAtLeast(0L)
+                String.format(Locale.US, "VÍDEO %02d:%02d", secs / 60L, secs % 60L)
+              } else {
+                photo.displayName
                   .removePrefix("ZoomIA_")
                   .substringAfterLast("_")
                   .removeSuffix(".jpg")
-                  .replace("_", "."),
+                  .replace("_", ".")
+              }
+              Text(
+                text = badgeText,
                 style = MaterialTheme.typography.labelSmall,
-                color = WarmAmber,
+                color = if (photo.isVideo) ElectricCyan else WarmAmber,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
               )
             }

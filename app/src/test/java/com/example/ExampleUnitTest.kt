@@ -3,8 +3,10 @@ package com.example
 import com.example.ai.FlagshipImageEnhancer
 import com.example.ai.ZoomEnhancementPipeline
 import com.example.data.UserSettings
+import com.example.domain.CaptureMode
 import com.example.domain.ZoomMath
 import com.example.domain.ZoomMode
+import com.example.ui.CameraUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -49,16 +51,20 @@ class ExampleUnitTest {
     assertEquals("1x", ZoomMath.formatZoomLabel(1.0f))
     assertEquals("2.5x", ZoomMath.formatZoomLabel(2.5f))
     assertEquals("100x", ZoomMath.formatZoomLabel(100.0f))
+    assertEquals(24, ZoomMath.toEquivalentFocalMm(1.0f))
+    assertEquals("52mm", ZoomMath.formatFocalMmLabel(2.16f))
+    assertEquals("240mm", ZoomMath.formatFocalMmLabel(10.0f))
   }
 
   @Test
-  fun local_real_esrgan_only_runs_on_small_digital_crops() {
-    assertFalse(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1536, digitalCropFactor = 1.0f))
-    assertFalse(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1152, digitalCropFactor = 1.0f))
-    assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 640, digitalCropFactor = 3.0f))
-    assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 320, digitalCropFactor = 1.0f))
-    assertEquals(0.76f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 640, digitalCropFactor = 3.0f), 0.001f)
-    assertEquals(0.90f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 240, digitalCropFactor = 8.0f), 0.001f)
+  fun local_real_esrgan_triggers_on_zoom_or_small_digital_crops() {
+    assertFalse(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 1.0f))
+    assertFalse(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 2.0f))
+    assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 9.0f))
+    assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 640, digitalCropFactor = 3.0f, totalZoom = 10.0f))
+    assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 320, digitalCropFactor = 1.0f, totalZoom = 1.0f))
+    assertEquals(0.74f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 4.0f), 0.001f)
+    assertEquals(0.86f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 9.0f), 0.001f)
   }
 
   @Test
@@ -96,5 +102,14 @@ class ExampleUnitTest {
     for (v in deconvolved) {
       assertTrue("Out of bounds value $v", v in 0f..255f)
     }
+  }
+
+  @Test
+  fun video_mode_caps_zoom_to_hardware_limit_while_photo_allows_100x() {
+    val photoState = CameraUiState(captureMode = CaptureMode.PHOTO, hardwareMaxZoom = 10f)
+    assertEquals(100f, photoState.maxZoomForCurrentMode, 0.001f)
+
+    val videoState = CameraUiState(captureMode = CaptureMode.VIDEO, hardwareMaxZoom = 10f)
+    assertEquals(10f, videoState.maxZoomForCurrentMode, 0.001f)
   }
 }

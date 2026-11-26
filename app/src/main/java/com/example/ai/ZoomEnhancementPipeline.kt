@@ -25,21 +25,32 @@ class ZoomEnhancementPipeline(
 
   companion object {
     /**
-     * Local 4x Real-ESRGAN-x4plus runs when the cropped sensor ROI is genuinely low-res
-     * (<= 520px long edge) or at significant digital crops (>= 2.0x with <= 840px long edge).
-     * Sharp optical/hybrid shots keep 100% of their native sensor pixels + Richardson-Lucy
-     * deconvolution so foliage & architecture look photographic, never painted.
+     * Local 4x Real-ESRGAN-x4plus runs when:
+     * - the cropped sensor ROI is <= 520px, OR
+     * - digital crop >= 2.0x with <= 840px, OR
+     * - totalZoom >= 3.5x (phones without optical telephoto like Galaxy Z Flip6 report
+     *   digital crop inside CameraX hardwareZoom up to 10x, so digitalCropFactor stays 1.0).
      */
-    fun shouldApplyLocalNeuralSr(fusedLong: Int, digitalCropFactor: Float): Boolean {
-      return fusedLong <= 520 || (digitalCropFactor >= 2.0f && fusedLong <= 840)
+    fun shouldApplyLocalNeuralSr(
+      fusedLong: Int,
+      digitalCropFactor: Float,
+      totalZoom: Float = 1f,
+    ): Boolean {
+      return fusedLong <= 520 ||
+        (digitalCropFactor >= 2.0f && fusedLong <= 840) ||
+        totalZoom >= 3.5f
     }
 
     /**
      * Blends Real-ESRGAN-x4plus output with the scaled native optical crop on mid-res
      * hybrid shots to retain natural filmic micro-grain alongside neural line restoration.
      */
-    fun naturalTextureBlendRatio(fusedLong: Int, digitalCropFactor: Float): Float {
-      return if (fusedLong > 360 && digitalCropFactor < 4.5f) 0.76f else 0.90f
+    fun naturalTextureBlendRatio(
+      fusedLong: Int,
+      digitalCropFactor: Float,
+      totalZoom: Float = 1f,
+    ): Float {
+      return if (totalZoom >= 6f || digitalCropFactor >= 4.5f || fusedLong <= 360) 0.86f else 0.74f
     }
   }
 
@@ -171,12 +182,13 @@ class ZoomEnhancementPipeline(
     // - 1x..optical/mid-hybrid: full 2048px sensor pixels + multi-frame fusion + Richardson-Lucy deconvolution
     // - Extreme digital zoom (or low-res crop): 16.7M Real-ESRGAN-x4plus + natural micro-texture fusion
     val fusedLong = max(fused.width, fused.height)
-    val shouldRunLocalSr = shouldApplyLocalNeuralSr(fusedLong, digitalCropFactor)
+    val shouldRunLocalSr = shouldApplyLocalNeuralSr(fusedLong, digitalCropFactor, totalZoom)
 
     var neuralSrApplied = false
     val baseSrBitmap = if (shouldRunLocalSr) {
-      val srInput = if (fusedLong > 464) {
-        val ratio = 464f / fusedLong
+      val srTargetLong = if (totalZoom >= 8f) 400 else 464
+      val srInput = if (fusedLong > srTargetLong) {
+        val ratio = srTargetLong.toFloat() / fusedLong
         Bitmap.createScaledBitmap(
           fused,
           (fused.width * ratio).roundToInt().coerceAtLeast(64),
@@ -192,7 +204,7 @@ class ZoomEnhancementPipeline(
         srInput.recycle()
       }
       if (usedModel) {
-        val srWeight = naturalTextureBlendRatio(fusedLong, digitalCropFactor)
+        val srWeight = naturalTextureBlendRatio(fusedLong, digitalCropFactor, totalZoom)
         val nativeUpscaled = Bitmap.createScaledBitmap(fused, upscaled.width, upscaled.height, true)
         val blended = blendBitmaps(upscaled, nativeUpscaled, srWeight)
         upscaled.recycle()

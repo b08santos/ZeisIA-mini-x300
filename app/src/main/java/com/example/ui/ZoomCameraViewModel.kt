@@ -12,6 +12,8 @@ import com.example.ai.ZoomEnhancementPipeline
 import com.example.data.MediaGalleryRepository
 import com.example.data.UserPreferencesRepository
 import com.example.data.UserSettings
+import androidx.camera.video.MediaStoreOutputOptions
+import com.example.domain.CaptureMode
 import com.example.domain.CaptureResult
 import com.example.domain.EnhancementPreset
 import com.example.domain.FlashModeOption
@@ -40,6 +42,7 @@ enum class ProcessingPhase {
 
 data class CameraUiState(
   val activeScreen: ActiveScreen = ActiveScreen.CAMERA,
+  val captureMode: CaptureMode = CaptureMode.PHOTO,
   val targetZoom: Float = 1f,
   val hardwareMinZoom: Float = 1f,
   val hardwareMaxZoom: Float = 8f,
@@ -49,6 +52,10 @@ data class CameraUiState(
   val flashMode: FlashModeOption = FlashModeOption.AUTO,
   val aiAcceleratorLabel: String = "IA…",
   val aiReady: Boolean = false,
+  val samsungExtensionActive: Boolean = false,
+  val videoQualityLabel: String = "FHD • OIS+EIS",
+  val isRecordingVideo: Boolean = false,
+  val recordingDurationMs: Long = 0L,
   val processingPhase: ProcessingPhase = ProcessingPhase.IDLE,
   val captureResult: CaptureResult? = null,
   val savedPhotos: List<SavedPhotoItem> = emptyList(),
@@ -56,7 +63,14 @@ data class CameraUiState(
   val showSettingsSheet: Boolean = false,
   val errorMessage: String? = null,
   val statusBanner: String? = null,
-)
+) {
+  val maxZoomForCurrentMode: Float
+    get() = if (captureMode == CaptureMode.VIDEO) {
+      hardwareMaxZoom.coerceAtLeast(1f)
+    } else {
+      ZoomMath.MAX_TOTAL_ZOOM
+    }
+}
 
 class ZoomCameraViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -90,7 +104,8 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
     val safeMin = minZoom.coerceAtLeast(0.5f)
     val safeMax = maxZoom.coerceAtLeast(safeMin)
     _uiState.update { state ->
-      val clampedTarget = state.targetZoom.coerceIn(safeMin, ZoomMath.MAX_TOTAL_ZOOM)
+      val modeMax = if (state.captureMode == CaptureMode.VIDEO) safeMax else ZoomMath.MAX_TOTAL_ZOOM
+      val clampedTarget = state.targetZoom.coerceIn(safeMin, modeMax)
       val (hw, digital) = ZoomMath.splitZoom(clampedTarget, safeMin, safeMax)
       state.copy(
         hardwareMinZoom = safeMin,
@@ -102,9 +117,73 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
     }
   }
 
+  fun setCaptureMode(mode: CaptureMode) {
+    _uiState.update { state ->
+      if (state.isRecordingVideo || state.captureMode == mode) return@update state
+      val modeMax = if (mode == CaptureMode.VIDEO) state.hardwareMaxZoom.coerceAtLeast(1f) else ZoomMath.MAX_TOTAL_ZOOM
+      val clampedTarget = state.targetZoom.coerceIn(state.hardwareMinZoom, modeMax)
+      val (hw, digital) = ZoomMath.splitZoom(clampedTarget, state.hardwareMinZoom, state.hardwareMaxZoom)
+      state.copy(
+        captureMode = mode,
+        targetZoom = clampedTarget,
+        hardwareZoom = hw,
+        digitalCropFactor = digital,
+        statusBanner = null,
+      )
+    }
+  }
+
+  fun onSamsungExtensionStatus(active: Boolean) {
+    _uiState.update { it.copy(samsungExtensionActive = active) }
+  }
+
+  fun onVideoQualityDetected(label: String) {
+    _uiState.update { it.copy(videoQualityLabel = label) }
+  }
+
+  fun createVideoOutputOptions(): MediaStoreOutputOptions {
+    return galleryRepository.createVideoOutputOptions(_uiState.value.targetZoom)
+  }
+
+  fun onVideoRecordingStarted() {
+    _uiState.update {
+      it.copy(
+        isRecordingVideo = true,
+        recordingDurationMs = 0L,
+        errorMessage = null,
+        statusBanner = null,
+      )
+    }
+  }
+
+  fun onVideoRecordingProgress(durationNanos: Long) {
+    _uiState.update {
+      it.copy(recordingDurationMs = (durationNanos / 1_000_000L).coerceAtLeast(0L))
+    }
+  }
+
+  fun onVideoRecordingFinalized(savedUri: Uri?, errorMsg: String?) {
+    _uiState.update {
+      it.copy(
+        isRecordingVideo = false,
+        recordingDurationMs = 0L,
+        errorMessage = errorMsg,
+        statusBanner = if (savedUri != null && errorMsg == null) {
+          "Vídeo salvo em Movies/ZoomIA"
+        } else {
+          null
+        },
+      )
+    }
+    if (savedUri != null && errorMsg == null) {
+      refreshGallery()
+    }
+  }
+
   fun setTargetZoom(zoom: Float) {
     _uiState.update { state ->
-      val clamped = zoom.coerceIn(state.hardwareMinZoom, ZoomMath.MAX_TOTAL_ZOOM)
+      val modeMax = state.maxZoomForCurrentMode
+      val clamped = zoom.coerceIn(state.hardwareMinZoom, modeMax)
       val (hw, digital) = ZoomMath.splitZoom(
         clamped,
         state.hardwareMinZoom,

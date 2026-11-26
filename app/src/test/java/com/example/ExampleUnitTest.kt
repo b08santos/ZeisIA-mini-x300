@@ -2,6 +2,7 @@ package com.example
 
 import com.example.ai.FlagshipImageEnhancer
 import com.example.ai.ZoomEnhancementPipeline
+import com.example.data.UserSettings
 import com.example.domain.ZoomMath
 import com.example.domain.ZoomMode
 import org.junit.Assert.assertEquals
@@ -10,6 +11,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExampleUnitTest {
+
+  @Test
+  fun default_settings_use_free_offline_pro_engine() {
+    val defaults = UserSettings()
+    assertFalse(defaults.cloudAiEnabled)
+    assertTrue(defaults.multiFrameEnabled)
+    assertTrue(defaults.autoSaveEnabled)
+  }
 
   @Test
   fun logarithmic_zoom_slider_roundtrip_1x_to_100x() {
@@ -43,11 +52,13 @@ class ExampleUnitTest {
   }
 
   @Test
-  fun real_esrgan_triggers_on_10x_optical_and_digital_crops() {
-    assertFalse(ZoomEnhancementPipeline.shouldApplyNeuralSr(fusedLong = 1536, totalZoom = 1.0f))
-    assertTrue(ZoomEnhancementPipeline.shouldApplyNeuralSr(fusedLong = 1536, totalZoom = 2.0f))
-    assertTrue(ZoomEnhancementPipeline.shouldApplyNeuralSr(fusedLong = 1536, totalZoom = 10.0f))
-    assertTrue(ZoomEnhancementPipeline.shouldApplyNeuralSr(fusedLong = 320, totalZoom = 1.0f))
+  fun local_real_esrgan_only_runs_on_small_digital_crops() {
+    assertFalse(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1536, digitalCropFactor = 1.0f))
+    assertFalse(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1152, digitalCropFactor = 1.0f))
+    assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 640, digitalCropFactor = 3.0f))
+    assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 320, digitalCropFactor = 1.0f))
+    assertEquals(0.76f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 640, digitalCropFactor = 3.0f), 0.001f)
+    assertEquals(0.90f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 240, digitalCropFactor = 8.0f), 0.001f)
   }
 
   @Test
@@ -58,12 +69,32 @@ class ExampleUnitTest {
       highlightCompress = 0.035f,
     )
     assertEquals(0f, lut[0], 0.01f)
-    // Dark shadows and bright highlights must stay anchored or slightly richer, never lifted white
     assertTrue(lut[40] < 40f)
     assertTrue(lut[215] <= 215f)
-    // Monotonicity preserved across the full range
     for (i in 1 until lut.size) {
       assertTrue("LUT not monotonic at $i", lut[i] >= lut[i - 1])
+    }
+  }
+
+  @Test
+  fun richardson_lucy_deconvolution_sharpens_edges_without_sky_noise() {
+    val w = 12
+    val h = 12
+    val luma = FloatArray(w * h) { idx ->
+      val x = idx % w
+      when {
+        x < 5 -> 60f
+        x == 5 -> 120f
+        else -> 200f
+      }
+    }
+    val deconvolved = FlagshipImageEnhancer.deconvolveLumaRL(luma, w, h, iterations = 3, blendStrength = 0.8f)
+    // Flat sky/left & right regions remain completely untouched
+    assertEquals(60f, deconvolved[2 * w + 2], 0.01f)
+    assertEquals(200f, deconvolved[2 * w + 9], 0.01f)
+    // Edge transition remains bounded strictly in [0, 255]
+    for (v in deconvolved) {
+      assertTrue("Out of bounds value $v", v in 0f..255f)
     }
   }
 }

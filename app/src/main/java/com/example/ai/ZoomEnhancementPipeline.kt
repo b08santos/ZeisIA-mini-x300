@@ -24,8 +24,22 @@ class ZoomEnhancementPipeline(
 ) {
 
   companion object {
-    fun shouldApplyNeuralSr(fusedLong: Int, totalZoom: Float): Boolean {
-      return fusedLong <= 512 || totalZoom >= 1.8f
+    /**
+     * Local 4x Real-ESRGAN-x4plus runs when the cropped sensor ROI is genuinely low-res
+     * (<= 520px long edge) or at significant digital crops (>= 2.0x with <= 840px long edge).
+     * Sharp optical/hybrid shots keep 100% of their native sensor pixels + Richardson-Lucy
+     * deconvolution so foliage & architecture look photographic, never painted.
+     */
+    fun shouldApplyLocalNeuralSr(fusedLong: Int, digitalCropFactor: Float): Boolean {
+      return fusedLong <= 520 || (digitalCropFactor >= 2.0f && fusedLong <= 840)
+    }
+
+    /**
+     * Blends Real-ESRGAN-x4plus output with the scaled native optical crop on mid-res
+     * hybrid shots to retain natural filmic micro-grain alongside neural line restoration.
+     */
+    fun naturalTextureBlendRatio(fusedLong: Int, digitalCropFactor: Float): Float {
+      return if (fusedLong > 360 && digitalCropFactor < 4.5f) 0.76f else 0.90f
     }
   }
 
@@ -38,7 +52,7 @@ class ZoomEnhancementPipeline(
   suspend fun decodeCenterRoi(
     frame: CapturedFrameBytes,
     digitalCropFactor: Float,
-    maxWorkingLongEdge: Int = 1536,
+    maxWorkingLongEdge: Int = 2048,
   ): Bitmap = withContext(Dispatchers.Default) {
     val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size, boundsOpts)
@@ -103,6 +117,7 @@ class ZoomEnhancementPipeline(
     hardwareZoom: Float,
     digitalCropFactor: Float,
     preset: EnhancementPreset,
+    useCloudAi: Boolean,
   ): CaptureResult = withContext(Dispatchers.Default) {
     val startNs = System.nanoTime()
     val refFrame = frames.first()
@@ -115,17 +130,53 @@ class ZoomEnhancementPipeline(
       refFrame
     }
 
+    if (useCloudAi && totalZoom >= 1.5f) {
+      val cloudBitmap = CloudSuperEnhancer.enhancePhoto(
+        source = fused,
+        zoomRatio = totalZoom,
+        preset = preset,
+      )
+      val originalCompare = if (
+        refFrame.width == cloudBitmap.width && refFrame.height == cloudBitmap.height
+      ) {
+        refFrame.copy(Bitmap.Config.ARGB_8888, false)
+      } else {
+        Bitmap.createScaledBitmap(refFrame, cloudBitmap.width, cloudBitmap.height, true)
+      }
+      val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
+      return@withContext CaptureResult(
+        originalCropBitmap = originalCompare,
+        baseSrBitmap = fused,
+        enhancedBitmap = cloudBitmap,
+        savedUri = null,
+        telemetry = PipelineTelemetry(
+          totalZoom = totalZoom,
+          hardwareZoom = hardwareZoom,
+          digitalCropFactor = digitalCropFactor,
+          framesFused = frames.size,
+          neuralSrApplied = true,
+          cloudEnhanced = true,
+          acceleratorLabel = "Nuvem",
+          inputWidth = inputW,
+          inputHeight = inputH,
+          outputWidth = cloudBitmap.width,
+          outputHeight = cloudBitmap.height,
+          processingTimeMs = elapsedMs,
+        ),
+        preset = preset,
+      )
+    }
+
+    // 100% Free Pro Offline Path:
+    // - 1x..optical/mid-hybrid: full 2048px sensor pixels + multi-frame fusion + Richardson-Lucy deconvolution
+    // - Extreme digital zoom (or low-res crop): 16.7M Real-ESRGAN-x4plus + natural micro-texture fusion
     val fusedLong = max(fused.width, fused.height)
-    // Apply Real-ESRGAN neural restoration for any zoom >= 1.8x (including 5x/10x telephoto)
-    // as well as any small cropped ROI <= 512px.
-    val shouldRunNeuralSr = shouldApplyNeuralSr(fusedLong, totalZoom)
+    val shouldRunLocalSr = shouldApplyLocalNeuralSr(fusedLong, digitalCropFactor)
 
     var neuralSrApplied = false
-    val baseSrBitmap = if (shouldRunNeuralSr) {
-      // 464px max long edge fits cleanly in a 3x4 (12-tile) grid and yields up to ~1856px 4x GAN output
-      val maxSrInLong = 464
-      val srInput = if (fusedLong > maxSrInLong) {
-        val ratio = maxSrInLong.toFloat() / fusedLong
+    val baseSrBitmap = if (shouldRunLocalSr) {
+      val srInput = if (fusedLong > 464) {
+        val ratio = 464f / fusedLong
         Bitmap.createScaledBitmap(
           fused,
           (fused.width * ratio).roundToInt().coerceAtLeast(64),
@@ -135,23 +186,20 @@ class ZoomEnhancementPipeline(
       } else {
         fused
       }
-
-      val (ganOutput, usedModel) = superResolutionEngine.upscale4x(srInput)
+      val (upscaled, usedModel) = superResolutionEngine.upscale4x(srInput)
       neuralSrApplied = usedModel
       if (srInput !== fused && srInput !== refFrame) {
         srInput.recycle()
       }
-
-      if (!usedModel) {
-        ganOutput.recycle()
-        fused
-      } else if (totalZoom < 4.0f && fusedLong >= 900) {
-        // At low-to-mid zoom (1.8x..3.9x), preserve subtle native optical texture alongside GAN strokes
-        val blended = blendBitmaps(ganOutput, fused, ganWeight = 0.82f)
-        ganOutput.recycle()
+      if (usedModel) {
+        val srWeight = naturalTextureBlendRatio(fusedLong, digitalCropFactor)
+        val nativeUpscaled = Bitmap.createScaledBitmap(fused, upscaled.width, upscaled.height, true)
+        val blended = blendBitmaps(upscaled, nativeUpscaled, srWeight)
+        upscaled.recycle()
+        nativeUpscaled.recycle()
         blended
       } else {
-        ganOutput
+        upscaled
       }
     } else {
       fused
@@ -179,7 +227,8 @@ class ZoomEnhancementPipeline(
       digitalCropFactor = digitalCropFactor,
       framesFused = frames.size,
       neuralSrApplied = neuralSrApplied,
-      acceleratorLabel = if (neuralSrApplied) superResolutionEngine.activeAcceleratorLabel else "ISP",
+      cloudEnhanced = false,
+      acceleratorLabel = if (neuralSrApplied) superResolutionEngine.activeAcceleratorLabel else "Óptico Pro",
       inputWidth = inputW,
       inputHeight = inputH,
       outputWidth = enhanced.width,
@@ -197,51 +246,84 @@ class ZoomEnhancementPipeline(
     )
   }
 
+  private fun blendBitmaps(primary: Bitmap, secondary: Bitmap, primaryWeight: Float): Bitmap {
+    val w = primary.width
+    val h = primary.height
+    val count = w * h
+    val p1 = IntArray(count)
+    val p2 = IntArray(count)
+    primary.getPixels(p1, 0, w, 0, 0, w, h)
+    secondary.getPixels(p2, 0, w, 0, 0, w, h)
+
+    val w1 = primaryWeight.coerceIn(0f, 1f)
+    val w2 = 1f - w1
+    val out = IntArray(count)
+    for (i in 0 until count) {
+      val a = p1[i]
+      val b = p2[i]
+      val r = (((a ushr 16) and 0xFF) * w1 + ((b ushr 16) and 0xFF) * w2 + 0.5f).toInt().coerceIn(0, 255)
+      val g = (((a ushr 8) and 0xFF) * w1 + ((b ushr 8) and 0xFF) * w2 + 0.5f).toInt().coerceIn(0, 255)
+      val bl = ((a and 0xFF) * w1 + (b and 0xFF) * w2 + 0.5f).toInt().coerceIn(0, 255)
+      out[i] = Color.rgb(r, g, bl)
+    }
+    return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+  }
+
   suspend fun reEnhanceWithPreset(
     current: CaptureResult,
     newPreset: EnhancementPreset,
+    useCloudAi: Boolean,
   ): CaptureResult = withContext(Dispatchers.Default) {
     val startNs = System.nanoTime()
+    if (useCloudAi && current.telemetry.totalZoom >= 1.5f) {
+      val cloudBitmap = CloudSuperEnhancer.enhancePhoto(
+        source = current.baseSrBitmap,
+        zoomRatio = current.telemetry.totalZoom,
+        preset = newPreset,
+      )
+      val originalResized = if (
+        current.originalCropBitmap.width == cloudBitmap.width &&
+          current.originalCropBitmap.height == cloudBitmap.height
+      ) {
+        current.originalCropBitmap
+      } else {
+        Bitmap.createScaledBitmap(
+          current.originalCropBitmap,
+          cloudBitmap.width,
+          cloudBitmap.height,
+          true,
+        )
+      }
+      val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
+      return@withContext current.copy(
+        originalCropBitmap = originalResized,
+        enhancedBitmap = cloudBitmap,
+        preset = newPreset,
+        telemetry = current.telemetry.copy(
+          cloudEnhanced = true,
+          neuralSrApplied = true,
+          acceleratorLabel = "Nuvem",
+          outputWidth = cloudBitmap.width,
+          outputHeight = cloudBitmap.height,
+          processingTimeMs = elapsedMs,
+        ),
+      )
+    }
+
     val enhanced = FlagshipImageEnhancer.enhance(
       source = current.baseSrBitmap,
       zoomRatio = current.telemetry.totalZoom,
       preset = newPreset,
-      neuralSrApplied = current.telemetry.neuralSrApplied,
+      neuralSrApplied = current.telemetry.neuralSrApplied && !current.telemetry.cloudEnhanced,
     )
     val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
     current.copy(
       enhancedBitmap = enhanced,
       preset = newPreset,
-      telemetry = current.telemetry.copy(processingTimeMs = elapsedMs),
+      telemetry = current.telemetry.copy(
+        cloudEnhanced = false,
+        processingTimeMs = elapsedMs,
+      ),
     )
-  }
-
-  private fun blendBitmaps(primary: Bitmap, secondary: Bitmap, ganWeight: Float): Bitmap {
-    val w = primary.width
-    val h = primary.height
-    val scaledSecondary = if (secondary.width == w && secondary.height == h) {
-      secondary
-    } else {
-      Bitmap.createScaledBitmap(secondary, w, h, true)
-    }
-    val count = w * h
-    val pPixels = IntArray(count)
-    val sPixels = IntArray(count)
-    primary.getPixels(pPixels, 0, w, 0, 0, w, h)
-    scaledSecondary.getPixels(sPixels, 0, w, 0, 0, w, h)
-    if (scaledSecondary !== secondary) scaledSecondary.recycle()
-
-    val w1 = ganWeight.coerceIn(0f, 1f)
-    val w2 = 1f - w1
-    val out = IntArray(count)
-    for (i in 0 until count) {
-      val c1 = pPixels[i]
-      val c2 = sPixels[i]
-      val r = (((c1 ushr 16) and 0xFF) * w1 + ((c2 ushr 16) and 0xFF) * w2 + 0.5f).toInt().coerceIn(0, 255)
-      val g = (((c1 ushr 8) and 0xFF) * w1 + ((c2 ushr 8) and 0xFF) * w2 + 0.5f).toInt().coerceIn(0, 255)
-      val b = ((c1 and 0xFF) * w1 + (c2 and 0xFF) * w2 + 0.5f).toInt().coerceIn(0, 255)
-      out[i] = Color.rgb(r, g, b)
-    }
-    return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
   }
 }

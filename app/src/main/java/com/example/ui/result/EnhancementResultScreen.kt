@@ -142,15 +142,17 @@ fun EnhancementResultScreen(
           style = MaterialTheme.typography.titleMedium,
           color = Color.White,
         )
-        val srTag = if (result.telemetry.neuralSrApplied) {
-          "Real-ESRGAN 4x (${result.telemetry.acceleratorLabel})"
-        } else {
-          "ISP Multi-Escala"
+        val srTag = when {
+          result.telemetry.cloudEnhanced -> "Gemini Super-IA • Nuvem"
+          result.telemetry.neuralSrApplied -> "Real-ESRGAN+ 4x (${result.telemetry.acceleratorLabel})"
+          else -> "Óptico Pro • Deconv"
         }
         Text(
           text = "$srTag • ${result.telemetry.outputWidth}×${result.telemetry.outputHeight} • ${result.telemetry.processingTimeMs} ms",
           style = MaterialTheme.typography.labelSmall,
           color = ElectricCyan,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
         )
       }
 
@@ -318,6 +320,27 @@ fun EnhancementResultScreen(
           modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )
       }
+
+      if (processingPhase == ProcessingPhase.ENHANCING_AI) {
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .background(ObsidianBg.copy(alpha = 0.65f)),
+          contentAlignment = Alignment.Center,
+        ) {
+          Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            CircularProgressIndicator(color = ElectricCyan, strokeWidth = 3.dp)
+            Text(
+              text = stringResource(R.string.processing_enhancing_cloud),
+              style = MaterialTheme.typography.labelLarge,
+              color = Color.White,
+            )
+          }
+        }
+      }
     }
 
     // Pipeline Telemetry Summary
@@ -349,45 +372,51 @@ fun EnhancementResultScreen(
       )
     }
 
-    // Preset Selector Chips
-    LazyRow(
-      contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+    // Preset Selector Chips (all 3 fit cleanly without right-edge clipping)
+    val isEnhancing = processingPhase == ProcessingPhase.ENHANCING_AI
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .widthIn(max = 600.dp)
+        .padding(horizontal = 14.dp, vertical = 6.dp),
       horizontalArrangement = Arrangement.spacedBy(6.dp),
-      modifier = Modifier.widthIn(max = 600.dp),
     ) {
-      items(EnhancementPreset.entries) { preset ->
+      EnhancementPreset.entries.forEach { preset ->
         val selected = result.preset == preset
         Surface(
           color = if (selected) ElectricCyan else ObsidianSurfaceHigh,
           shape = RoundedCornerShape(50),
           border = BorderStroke(1.dp, if (selected) ElectricCyan else OpticalBorder),
           modifier = Modifier
+            .weight(1f)
             .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(50))
-            .clickable { onSelectPreset(preset) }
+            .clickable(enabled = !isEnhancing) { onSelectPreset(preset) }
             .testTag("preset_${preset.name.lowercase()}"),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalArrangement = Arrangement.Center,
           ) {
             Icon(
               imageVector = Icons.Outlined.AutoAwesome,
               contentDescription = null,
               tint = if (selected) ObsidianBg else ElectricCyan,
-              modifier = Modifier.size(15.dp),
+              modifier = Modifier.size(14.dp),
             )
+            Spacer(modifier = Modifier.width(4.dp))
             Text(
               text = when (preset) {
                 EnhancementPreset.NATURAL -> stringResource(R.string.preset_natural)
                 EnhancementPreset.ULTRA_SHARP -> stringResource(R.string.preset_ultra_sharp)
                 EnhancementPreset.TEXT_DETAIL -> stringResource(R.string.preset_text_detail)
               },
-              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+              style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
               color = if (selected) ObsidianBg else Color.White,
               maxLines = 1,
               softWrap = false,
+              overflow = TextOverflow.Ellipsis,
             )
           }
         }

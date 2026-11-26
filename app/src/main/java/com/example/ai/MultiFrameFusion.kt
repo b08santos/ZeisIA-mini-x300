@@ -8,13 +8,13 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Aligns a short burst of handheld zoomed frames using coarse-to-fine luminance translation
- * search and fuses them with LUT-accelerated motion-robust weighting to suppress noise
- * without ghosting.
+ * Aligns a rapid burst of handheld zoomed frames using a 2-stage coarse-to-fine luminance
+ * search (up to +/- 56 px) and fuses them with strict outlier & motion-ghost rejection so
+ * noise drops cleanly while skies and edges remain 100% ghost-free.
  */
 object MultiFrameFusion {
 
-  private const val ROBUSTNESS_SIGMA_SQ = 26f * 26f * 2f
+  private const val ROBUSTNESS_SIGMA_SQ = 10f * 10f * 2f
 
   // 256-entry lookup table eliminates millions of per-pixel exp() calls on CPU
   private val weightLut = FloatArray(256) { diff ->
@@ -47,7 +47,7 @@ object MultiFrameFusion {
       accumW[i] = 1f
     }
 
-    val maxShift = (min(width, height) * 0.05f).toInt().coerceIn(6, 20)
+    val maxShift = (min(width, height) * 0.08f).toInt().coerceIn(8, 56)
     val candPixels = IntArray(totalPixels)
     val candLuma = IntArray(totalPixels)
 
@@ -58,13 +58,15 @@ object MultiFrameFusion {
       candidate.getPixels(candPixels, 0, width, 0, 0, width, height)
       fillLumaInt(candPixels, candLuma)
 
-      val (bestDx, bestDy) = findBestTranslation(
+      val (bestDx, bestDy, meanSad) = findBestTranslation(
         refLuma = refLuma,
         candLuma = candLuma,
         width = width,
         height = height,
         maxShift = maxShift,
       )
+      // Strictly reject shaken frames so misaligned roofs/branches never ghost into sky
+      if (meanSad > 12L) continue
 
       for (y in 0 until height) {
         val sy = y + bestDy
@@ -78,7 +80,7 @@ object MultiFrameFusion {
           val candIdx = candRow + sx
           val diff = abs(refLuma[refIdx] - candLuma[candIdx]).coerceIn(0, 255)
           val weight = weightLut[diff]
-          if (weight > 0.08f) {
+          if (weight > 0.32f) {
             val cp = candPixels[candIdx]
             accumR[refIdx] += ((cp ushr 16) and 0xFF) * weight
             accumG[refIdx] += ((cp ushr 8) and 0xFF) * weight
@@ -123,22 +125,23 @@ object MultiFrameFusion {
     width: Int,
     height: Int,
     maxShift: Int,
-  ): Pair<Int, Int> {
-    val marginX = maxShift + max(4, width / 8)
-    val marginY = maxShift + max(4, height / 8)
+  ): Triple<Int, Int, Long> {
+    val marginX = maxShift + max(4, width / 10)
+    val marginY = maxShift + max(4, height / 10)
     val startX = marginX.coerceAtMost(width / 3)
     val endX = (width - marginX).coerceAtLeast(startX + 1)
     val startY = marginY.coerceAtMost(height / 3)
     val endY = (height - marginY).coerceAtLeast(startY + 1)
 
-    val coarseStep = max(3, min(endX - startX, endY - startY) / 24)
+    val coarseSampleStep = max(6, min(endX - startX, endY - startY) / 22)
     var bestDx = 0
     var bestDy = 0
     var bestCost = Long.MAX_VALUE
 
-    for (dy in -maxShift..maxShift step 3) {
-      for (dx in -maxShift..maxShift step 3) {
-        val cost = sadCost(refLuma, candLuma, width, startX, endX, startY, endY, dx, dy, coarseStep)
+    // Stage 1: wide coarse search (step 4 covers up to +/-56px quickly)
+    for (dy in -maxShift..maxShift step 4) {
+      for (dx in -maxShift..maxShift step 4) {
+        val cost = sadCost(refLuma, candLuma, width, startX, endX, startY, endY, dx, dy, coarseSampleStep)
         if (cost < bestCost) {
           bestCost = cost
           bestDx = dx
@@ -147,12 +150,16 @@ object MultiFrameFusion {
       }
     }
 
+    // Stage 2: exact 1px refinement around coarse winner
     val refineCenterX = bestDx
     val refineCenterY = bestDy
-    val fineStep = max(2, coarseStep / 2)
-    for (dy in (refineCenterY - 2)..(refineCenterY + 2)) {
-      for (dx in (refineCenterX - 2)..(refineCenterX + 2)) {
-        val cost = sadCost(refLuma, candLuma, width, startX, endX, startY, endY, dx, dy, fineStep)
+    val fineSampleStep = max(3, coarseSampleStep / 2)
+    bestCost = Long.MAX_VALUE
+    for (dy in (refineCenterY - 3)..(refineCenterY + 3)) {
+      if (dy < -maxShift || dy > maxShift) continue
+      for (dx in (refineCenterX - 3)..(refineCenterX + 3)) {
+        if (dx < -maxShift || dx > maxShift) continue
+        val cost = sadCost(refLuma, candLuma, width, startX, endX, startY, endY, dx, dy, fineSampleStep)
         if (cost < bestCost) {
           bestCost = cost
           bestDx = dx
@@ -161,7 +168,7 @@ object MultiFrameFusion {
       }
     }
 
-    return bestDx to bestDy
+    return Triple(bestDx, bestDy, bestCost / 1024L)
   }
 
   private fun sadCost(

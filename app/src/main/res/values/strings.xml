@@ -11,6 +11,7 @@
     <string name="zoom_mode_ultra">Super Zoom IA</string>
     <string name="processing_capturing_burst">Capturando quadros…</string>
     <string name="processing_enhancing_ai">Aprimorando detalhes com IA…</string>
+    <string name="processing_enhancing_cloud">Reconstruindo detalhes com IA na nuvem…</string>
     <string name="processing_saving">Salvando na galeria…</string>
     <string name="preset_natural">Natural</string>
     <string name="preset_ultra_sharp">Ultra Nítido</string>
@@ -27,12 +28,14 @@
     <string name="gallery_empty_title">Nenhuma foto ainda</string>
     <string name="gallery_empty_subtitle">Tire uma foto com zoom normal ou até 100x para vê-la aprimorada aqui.</string>
     <string name="settings_title">Motor de Zoom IA</string>
-    <string name="settings_multiframe_title">Fusão Multi-Quadro (Burst)</string>
-    <string name="settings_multiframe_desc">Captura até 3 quadros em sequência no zoom ≥ 2x para reduzir ruído antes da super-resolução.</string>
+    <string name="settings_cloud_ai_title">IA Generativa na Nuvem (Opcional)</string>
+    <string name="settings_cloud_ai_desc">Desativado por padrão (o modo offline já é 100% grátis e ilimitado). Requer plano pago Blaze no Firebase para uso na nuvem.</string>
+    <string name="settings_multiframe_title">Fusão Multi-Quadro (Burst 4–5x)</string>
+    <string name="settings_multiframe_desc">Combina até 5 quadros alinhados no zoom ≥ 2x para remover ruído e recuperar nitidez real sem fantasmas.</string>
     <string name="settings_autosave_title">Salvar automaticamente na galeria</string>
     <string name="settings_autosave_desc">Grava cada foto aprimorada diretamente em Pictures/ZoomIA.</string>
-    <string name="settings_limits_title">Sobre o Zoom 100x neste aparelho</string>
-    <string name="settings_limits_desc">Seu celular usa a lente real até o limite óptico/hardware e, a partir de 2x até 100x, aplica fusão multi-quadro + reconstrução neural local (Real-ESRGAN 4x via LiteRT) para restaurar traços, bordas e texturas sem esbranquiçar a foto.</string>
+    <string name="settings_limits_title">Motor Pro Offline • 100% Grátis</string>
+    <string name="settings_limits_desc">Combina fusão multi-quadro, deconvolução óptica Richardson-Lucy e Real-ESRGAN+ 4x (16,7M parâmetros) direto no seu aparelho, sem internet e sem nenhuma cobrança por foto.</string>
     <string name="cd_shutter">Tirar foto</string>
     <string name="cd_gallery">Abrir capturas salvas</string>
     <string name="cd_flip_camera">Alternar câmera</string>

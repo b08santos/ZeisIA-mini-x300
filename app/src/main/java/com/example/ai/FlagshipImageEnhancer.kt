@@ -11,12 +11,13 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
- * Flagship-grade computational ISP refinement stage tuned for rich contrast, natural
- * non-washed-out exposure, and crisp stroke/edge definition without white sky halos:
- * 1. LUT-accelerated edge-preserving luma denoise (light when Real-ESRGAN already ran)
- * 2. Halo-free Difference-of-Gaussians (DoG) midtone micro-contrast (replaces tile CLAHE)
- * 3. Contrast Adaptive Sharpening (CAS) with strict overshoot clamping
- * 4. Filmic black-point & highlight-safe S-curve LUT + balanced color vibrance
+ * Flagship-grade computational ISP refinement stage tuned for photorealistic clarity,
+ * natural exposure, and crisp edge recovery without cartoon artifacts or sky halos:
+ * 1. LUT-accelerated edge-preserving luma denoise
+ * 2. Ringing-free Richardson-Lucy optical deconvolution (reverses lens/crop diffraction blur)
+ * 3. Halo-free Difference-of-Gaussians (DoG) midtone micro-contrast
+ * 4. Contrast Adaptive Sharpening (CAS) with strict local overshoot clamping
+ * 5. Filmic black-point & highlight-safe S-curve LUT + balanced color vibrance
  */
 object FlagshipImageEnhancer {
 
@@ -50,49 +51,71 @@ object FlagshipImageEnhancer {
 
     val zoomFactor = ((zoomRatio - 1f) / 25f).coerceIn(0f, 1f)
 
-    // 1. When Real-ESRGAN already cleaned compression noise & reconstructed lines,
-    // skip heavy smoothing so we preserve 100% of the crisp neural strokes.
+    // 1. Light edge-preserving denoise on raw sensor shots; preserve full detail after Real-ESRGAN-x4plus
     val cleanY = if (neuralSrApplied) {
       yPlane
     } else {
       val denoiseStrength = when (preset) {
-        EnhancementPreset.NATURAL -> 0.35f + 0.20f * zoomFactor
-        EnhancementPreset.ULTRA_SHARP -> 0.45f + 0.25f * zoomFactor
-        EnhancementPreset.TEXT_DETAIL -> 0.55f + 0.25f * zoomFactor
+        EnhancementPreset.NATURAL -> 0.28f + 0.16f * zoomFactor
+        EnhancementPreset.ULTRA_SHARP -> 0.34f + 0.18f * zoomFactor
+        EnhancementPreset.TEXT_DETAIL -> 0.40f + 0.20f * zoomFactor
       }
-      bilateralLuma3x3Fast(yPlane, width, height, sigmaRange = 12f + 10f * denoiseStrength)
+      bilateralLuma3x3Fast(yPlane, width, height, sigmaRange = 10f + 8f * denoiseStrength)
     }
 
-    // Gentle chroma smoothing suppresses color blotches without smearing luma lines
+    // Gentle chroma smoothing suppresses color noise blotches without smearing luma lines
     val cleanCb = boxBlur3x3(cbPlane, width, height)
     val cleanCr = boxBlur3x3(crPlane, width, height)
 
-    // 2. Halo-free micro-contrast (replaces tile CLAHE so skies & blacks never turn milky/white)
+    // 2. Richardson-Lucy Optical Deconvolution: recovers real lens & telephoto micro-detail
+    val deconvolvedY = if (neuralSrApplied) {
+      cleanY
+    } else {
+      val rlIterations = when (preset) {
+        EnhancementPreset.NATURAL -> 2
+        EnhancementPreset.ULTRA_SHARP -> 3
+        EnhancementPreset.TEXT_DETAIL -> 3
+      }
+      val rlBlend = when (preset) {
+        EnhancementPreset.NATURAL -> 0.52f + 0.15f * zoomFactor
+        EnhancementPreset.ULTRA_SHARP -> 0.72f + 0.18f * zoomFactor
+        EnhancementPreset.TEXT_DETAIL -> 0.88f
+      }
+      deconvolveLumaRL(
+        src = cleanY,
+        width = width,
+        height = height,
+        iterations = rlIterations,
+        blendStrength = rlBlend.coerceIn(0f, 0.95f),
+      )
+    }
+
+    // 3. Halo-free micro-contrast for architectural, brick, foliage & window depth
     val microContrastStrength = when (preset) {
       EnhancementPreset.NATURAL -> 0.16f
-      EnhancementPreset.ULTRA_SHARP -> 0.30f + 0.08f * zoomFactor
-      EnhancementPreset.TEXT_DETAIL -> 0.44f
+      EnhancementPreset.ULTRA_SHARP -> 0.28f + 0.08f * zoomFactor
+      EnhancementPreset.TEXT_DETAIL -> 0.42f
     }
-    val texturedY = microContrastDetail(cleanY, width, height, strength = microContrastStrength)
+    val texturedY = microContrastDetail(deconvolvedY, width, height, strength = microContrastStrength)
 
-    // 3. Contrast Adaptive Sharpening (CAS) for crisp architectural, foliage & text lines
+    // 4. Contrast Adaptive Sharpening (CAS) with strict local overshoot clamping
     val casStrength = when (preset) {
-      EnhancementPreset.NATURAL -> if (neuralSrApplied) 0.30f else 0.42f
-      EnhancementPreset.ULTRA_SHARP -> if (neuralSrApplied) 0.58f else 0.72f
-      EnhancementPreset.TEXT_DETAIL -> if (neuralSrApplied) 0.78f else 0.90f
+      EnhancementPreset.NATURAL -> if (neuralSrApplied) 0.25f else 0.36f
+      EnhancementPreset.ULTRA_SHARP -> if (neuralSrApplied) 0.48f else 0.62f
+      EnhancementPreset.TEXT_DETAIL -> if (neuralSrApplied) 0.70f else 0.84f
     }
     val sharpY = contrastAdaptiveSharpen(texturedY, width, height, strength = casStrength)
 
-    // 4. Filmic black-point & highlight-safe S-curve LUT + balanced vibrance
+    // 5. Filmic black-point & highlight-safe S-curve LUT + balanced vibrance
     val contrastPower = when (preset) {
       EnhancementPreset.NATURAL -> 1.07f
-      EnhancementPreset.ULTRA_SHARP -> 1.15f
-      EnhancementPreset.TEXT_DETAIL -> 1.24f
+      EnhancementPreset.ULTRA_SHARP -> 1.14f
+      EnhancementPreset.TEXT_DETAIL -> 1.22f
     }
     val shadowDepth = when (preset) {
       EnhancementPreset.NATURAL -> 0.02f
-      EnhancementPreset.ULTRA_SHARP -> 0.045f
-      EnhancementPreset.TEXT_DETAIL -> 0.06f
+      EnhancementPreset.ULTRA_SHARP -> 0.04f
+      EnhancementPreset.TEXT_DETAIL -> 0.055f
     }
     val highlightCompress = when (preset) {
       EnhancementPreset.NATURAL -> 0.02f
@@ -130,6 +153,100 @@ object FlagshipImageEnhancer {
   }
 
   /**
+   * Fast separable Richardson-Lucy optical deconvolution with anti-ringing clamping:
+   * mathematically reverses camera PSF blur while protecting flat skies from noise amplification.
+   */
+  internal fun deconvolveLumaRL(
+    src: FloatArray,
+    width: Int,
+    height: Int,
+    iterations: Int = 2,
+    blendStrength: Float = 0.75f,
+  ): FloatArray {
+    if (width < 5 || height < 5 || iterations <= 0 || blendStrength <= 0.01f) return src
+    val count = src.size
+    var estimate = src.copyOf()
+    val reblurred = FloatArray(count)
+    val ratio = FloatArray(count)
+    val correction = FloatArray(count)
+    val scratch = FloatArray(count)
+
+    repeat(iterations) {
+      convolveGaussian3x3(estimate, reblurred, scratch, width, height)
+      for (i in 0 until count) {
+        val obs = src[i].coerceAtLeast(1f)
+        val estBlur = reblurred[i].coerceAtLeast(1f)
+        ratio[i] = (obs / estBlur).coerceIn(0.65f, 1.50f)
+      }
+      convolveGaussian3x3(ratio, correction, scratch, width, height)
+      for (i in 0 until count) {
+        estimate[i] = (estimate[i] * correction[i]).coerceIn(0f, 255f)
+      }
+    }
+
+    // Anti-ringing overshoot clamp + flat-area sky protection
+    val out = src.copyOf()
+    for (y in 1 until height - 1) {
+      val rPrev = (y - 1) * width
+      val rCurr = y * width
+      val rNext = (y + 1) * width
+      for (x in 1 until width - 1) {
+        val idx = rCurr + x
+        val orig = src[idx]
+        val n0 = src[rPrev + x]
+        val n1 = src[rCurr + x - 1]
+        val n2 = src[rCurr + x + 1]
+        val n3 = src[rNext + x]
+        val localMin = min(orig, min(min(n0, n1), min(n2, n3)))
+        val localMax = max(orig, max(max(n0, n1), max(n2, n3)))
+        val localRange = localMax - localMin
+
+        // Skip flat sky/wall regions to avoid noise amplification
+        if (localRange < 3.5f) continue
+
+        val margin = (localRange * 0.22f).coerceIn(1.5f, 10f)
+        val clampedEst = estimate[idx].coerceIn(
+          (localMin - margin).coerceAtLeast(0f),
+          (localMax + margin).coerceAtMost(255f),
+        )
+        out[idx] = orig * (1f - blendStrength) + clampedEst * blendStrength
+      }
+    }
+    return out
+  }
+
+  private fun convolveGaussian3x3(
+    src: FloatArray,
+    dst: FloatArray,
+    scratch: FloatArray,
+    width: Int,
+    height: Int,
+  ) {
+    // Horizontal [0.25, 0.5, 0.25]
+    for (y in 0 until height) {
+      val row = y * width
+      scratch[row] = src[row]
+      for (x in 1 until width - 1) {
+        scratch[row + x] = 0.25f * src[row + x - 1] + 0.5f * src[row + x] + 0.25f * src[row + x + 1]
+      }
+      scratch[row + width - 1] = src[row + width - 1]
+    }
+    // Vertical [0.25, 0.5, 0.25]
+    for (x in 0 until width) {
+      dst[x] = scratch[x]
+      dst[(height - 1) * width + x] = scratch[(height - 1) * width + x]
+    }
+    for (y in 1 until height - 1) {
+      val rPrev = (y - 1) * width
+      val rCurr = y * width
+      val rNext = (y + 1) * width
+      for (x in 0 until width) {
+        dst[rCurr + x] = 0.25f * scratch[rPrev + x] + 0.5f * scratch[rCurr + x] + 0.25f * scratch[rNext + x]
+      }
+    }
+  }
+
+  /**
    * Builds a 256-entry tonal LUT:
    * - Anchors and gently deepens shadows (prevents milky gray haze)
    * - Applies balanced midtone S-curve contrast
@@ -146,8 +263,6 @@ object FlagshipImageEnhancer {
       val omp = (1f - x).pow(contrastPower)
       val sCurve = if (xp + omp > 0f) xp / (xp + omp) else x
 
-      // Deepen dark/mid-dark tones for rich architectural lines while keeping bright skies
-      // anchored near original exposure so photos never look washed-out or milky white.
       val shaped = if (x > 0.5f) {
         val highS = x * 0.85f + sCurve * 0.15f
         val rolloff = highlightCompress * (x - 0.5f) * (1f - x) * 4f
@@ -180,7 +295,6 @@ object FlagshipImageEnhancer {
         var sum = center * 2.0f
         var weightSum = 2.0f
 
-        // Cardinal neighbors (spatial weight 1.0)
         val nTop = src[rPrev + x]
         val wTop = rangeLut[abs(nTop - center).toInt().coerceIn(0, 255)]
         sum += nTop * wTop; weightSum += wTop
@@ -197,7 +311,6 @@ object FlagshipImageEnhancer {
         val wBot = rangeLut[abs(nBot - center).toInt().coerceIn(0, 255)]
         sum += nBot * wBot; weightSum += wBot
 
-        // Diagonal neighbors (spatial weight 0.7)
         val nTL = src[rPrev + x - 1]
         val wTL = 0.7f * rangeLut[abs(nTL - center).toInt().coerceIn(0, 255)]
         sum += nTL * wTL; weightSum += wTL
@@ -249,7 +362,6 @@ object FlagshipImageEnhancer {
   ): FloatArray {
     if (width < 5 || height < 5 || strength <= 0.01f) return src
     val temp = FloatArray(src.size)
-    // Horizontal [1, 4, 6, 4, 1] / 16
     for (y in 0 until height) {
       val row = y * width
       temp[row] = src[row]
@@ -284,10 +396,8 @@ object FlagshipImageEnhancer {
           ) * 0.0625f
         val orig = src[r0 + x]
         val detail = orig - blurred
-        // Suppress boost on flat regions (sky) and hard-clamp positive overshoot to avoid white halos
         if (abs(detail) < 2.2f) continue
         val normY = orig / 255f
-        // Allow crisp dark line reinforcement while damping bright white rim halos
         val positiveWeight = if (detail > 0f) (1f - normY * 0.45f) else 1.05f
         val delta = (detail * strength * positiveWeight).coerceIn(-18f, 12f)
         dst[r0 + x] = (orig + delta).coerceIn(0f, 255f)

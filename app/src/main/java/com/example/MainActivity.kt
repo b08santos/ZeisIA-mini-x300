@@ -66,6 +66,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ai.configureAppCheck
 import com.example.ui.ActiveScreen
 import com.example.ui.ZoomCameraViewModel
 import com.example.ui.camera.CameraViewfinderScreen
@@ -83,6 +84,7 @@ import com.example.ui.theme.ZoomIATheme
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    configureAppCheck(this, intent)
     enableEdgeToEdge(
       statusBarStyle = SystemBarStyle.dark(ObsidianBg.toArgb()),
       navigationBarStyle = SystemBarStyle.dark(ObsidianBg.toArgb()),
@@ -216,6 +218,7 @@ fun ZoomIAApp(viewModel: ZoomCameraViewModel = viewModel()) {
           settings = uiState.settings,
           aiAcceleratorLabel = uiState.aiAcceleratorLabel,
           hardwareMaxZoom = uiState.hardwareMaxZoom,
+          onToggleCloudAi = viewModel::setCloudAiEnabled,
           onToggleMultiFrame = viewModel::setMultiFrameEnabled,
           onToggleAutoSave = viewModel::setAutoSaveEnabled,
           onToggleGrid = viewModel::setGridEnabled,
@@ -305,11 +308,11 @@ private fun CameraPermissionGate(
           ) {
             PermissionFeatureRow(
               icon = Icons.Outlined.AutoAwesome,
-              text = "Reconstrução neural local (Real-ESRGAN 4x) + nitidez adaptativa",
+              text = "Real-ESRGAN+ 4x + Deconvolução Óptica 100% grátis no celular",
             )
             PermissionFeatureRow(
               icon = Icons.Outlined.Lock,
-              text = "Sem internet e sem envio de fotos para servidores",
+              text = "Sem conta, sem cartão e todas as fotos ficam na sua galeria",
             )
           }
         }

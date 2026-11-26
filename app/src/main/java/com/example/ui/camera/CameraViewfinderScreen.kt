@@ -400,7 +400,11 @@ fun CameraViewfinderScreen(
               .padding(horizontal = 6.dp, vertical = 2.dp),
           ) {
             Text(
-              text = "OFFLINE • ${uiState.aiAcceleratorLabel}",
+              text = if (uiState.settings.cloudAiEnabled) {
+                "NUVEM • GEMINI"
+              } else {
+                "PRO OFFLINE • ${uiState.aiAcceleratorLabel}"
+              },
               style = MaterialTheme.typography.labelSmall,
               color = ElectricCyan,
               maxLines = 1,
@@ -643,10 +647,10 @@ fun CameraViewfinderScreen(
               val cap = imageCapture ?: return@clickable
               onStartBurstCapture()
               scope.launch {
-                val burstCount = if (uiState.settings.multiFrameEnabled && uiState.targetZoom >= 2f) {
-                  3
-                } else {
-                  1
+                val burstCount = when {
+                  !uiState.settings.multiFrameEnabled || uiState.targetZoom < 2f -> 1
+                  uiState.targetZoom >= 15f -> 5
+                  else -> 4
                 }
                 val frames = CameraCaptureHelper.captureBurst(cap, captureExecutor, burstCount)
                 if (frames.isEmpty()) {
@@ -718,7 +722,11 @@ fun CameraViewfinderScreen(
           Text(
             text = when (uiState.processingPhase) {
               ProcessingPhase.CAPTURING_BURST -> stringResource(R.string.processing_capturing_burst)
-              ProcessingPhase.ENHANCING_AI -> stringResource(R.string.processing_enhancing_ai)
+              ProcessingPhase.ENHANCING_AI -> if (uiState.settings.cloudAiEnabled && uiState.targetZoom >= 1.5f) {
+                stringResource(R.string.processing_enhancing_cloud)
+              } else {
+                stringResource(R.string.processing_enhancing_ai)
+              }
               ProcessingPhase.SAVING -> stringResource(R.string.processing_saving)
               ProcessingPhase.IDLE -> ""
             },

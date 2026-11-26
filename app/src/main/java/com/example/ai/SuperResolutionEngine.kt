@@ -18,15 +18,15 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 
 /**
- * Offline 4x neural super-resolution & line restoration engine backed by Real-ESRGAN-General-x4v3
- * via LiteRT CompiledModel. All model creation, inference, buffer reuse, and teardown run on
- * a single confined thread.
+ * Offline 4x neural super-resolution & line restoration engine backed by Real-ESRGAN-x4plus
+ * (16.7M RRDB parameters, W8A8 UINT8 quantized) via LiteRT CompiledModel.
+ * All model creation, inference, buffer reuse, and teardown run on a single confined thread.
  */
 class SuperResolutionEngine(context: Context) : AutoCloseable {
 
   companion object {
-    private const val MODEL_ASSET = "real_esrgan_general_x4v3.tflite"
-    private const val MODEL_VERSION = "v2-realesrgan"
+    private const val MODEL_ASSET = "real_esrgan_x4plus.tflite"
+    private const val MODEL_VERSION = "v3-rx4plus-w8a8"
     const val TILE_IN = 128
     const val SCALE = 4
     const val TILE_OUT = TILE_IN * SCALE // 512
@@ -67,7 +67,8 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
   }
   private val liteRtDispatcher = singleThreadExecutor.asCoroutineDispatcher()
 
-  private var runner: QuickSrRunner? = null
+  private var runner: EsrganPlusRunner? = null
+
   @Volatile
   var activeAcceleratorLabel: String = "CPU"
     private set
@@ -86,7 +87,7 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
 
     if (tryGpuFirst) {
       try {
-        runner = QuickSrRunner(appContext, stagedModel, Accelerator.GPU)
+        runner = EsrganPlusRunner(appContext, stagedModel, Accelerator.GPU)
         activeAcceleratorLabel = "GPU"
         initialized = true
         return@withContext activeAcceleratorLabel
@@ -96,7 +97,7 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
     }
 
     try {
-      runner = QuickSrRunner(appContext, stagedModel, Accelerator.CPU)
+      runner = EsrganPlusRunner(appContext, stagedModel, Accelerator.CPU)
       activeAcceleratorLabel = "CPU"
     } catch (_: Throwable) {
       runner = null
@@ -107,9 +108,9 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
   }
 
   /**
-   * Runs overlapping 128x128 -> 512x512 tiled 4x neural super-resolution with smooth feathering
-   * across overlapping tile seams. Falls back cleanly to high-quality bicubic scaling if LiteRT
-   * cannot run on the device.
+   * Runs overlapping 128x128 -> 512x512 tiled 4x neural super-resolution using UINT8 tensors
+   * with smooth feathering across overlapping tile seams. Falls back cleanly to high-quality
+   * bicubic scaling if LiteRT cannot run on the device.
    */
   suspend fun upscale4x(source: Bitmap): Pair<Bitmap, Boolean> = withContext(liteRtDispatcher) {
     if (!initialized) {
@@ -143,7 +144,7 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
     val accumB = FloatArray(outW * outH)
     val accumW = FloatArray(outW * outH)
 
-    val tileInput = FloatArray(INPUT_ELEMENTS)
+    val tileInput = ByteArray(INPUT_ELEMENTS)
     val feather1D = buildFeatherWeights(TILE_OUT, OVERLAP_OUT)
 
     val cols = if (inW <= TILE_IN) 1 else ceil((inW - OVERLAP_IN).toDouble() / STRIDE_IN).toInt()
@@ -155,7 +156,7 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
         for (col in 0 until cols) {
           val tileX = computeTileStart(col, cols, inW)
 
-          // Extract 128x128 patch with clamp-to-edge padding
+          // Extract 128x128 RGB UINT8 patch with clamp-to-edge padding
           var idx = 0
           for (py in 0 until TILE_IN) {
             val sy = (tileY + py).coerceIn(0, inH - 1)
@@ -163,9 +164,9 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
             for (px in 0 until TILE_IN) {
               val sx = (tileX + px).coerceIn(0, inW - 1)
               val pixel = srcPixels[rowOffset + sx]
-              tileInput[idx++] = ((pixel shr 16) and 0xFF) / 255f
-              tileInput[idx++] = ((pixel shr 8) and 0xFF) / 255f
-              tileInput[idx++] = (pixel and 0xFF) / 255f
+              tileInput[idx++] = ((pixel shr 16) and 0xFF).toByte()
+              tileInput[idx++] = ((pixel shr 8) and 0xFF).toByte()
+              tileInput[idx++] = (pixel and 0xFF).toByte()
             }
           }
 
@@ -195,9 +196,9 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
               val w = wx * wy
               val tBase = (tileRow + ox) * 3
               val dIdx = dstRow + outStartX + ox
-              accumR[dIdx] += outTile[tBase].coerceIn(0f, 1f) * w
-              accumG[dIdx] += outTile[tBase + 1].coerceIn(0f, 1f) * w
-              accumB[dIdx] += outTile[tBase + 2].coerceIn(0f, 1f) * w
+              accumR[dIdx] += (outTile[tBase].toInt() and 0xFF) * w
+              accumG[dIdx] += (outTile[tBase + 1].toInt() and 0xFF) * w
+              accumB[dIdx] += (outTile[tBase + 2].toInt() and 0xFF) * w
               accumW[dIdx] += w
             }
           }
@@ -207,9 +208,9 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
       val outPixels = IntArray(outW * outH)
       for (i in outPixels.indices) {
         val w = accumW[i].coerceAtLeast(1e-5f)
-        val r = ((accumR[i] / w) * 255f + 0.5f).toInt().coerceIn(0, 255)
-        val g = ((accumG[i] / w) * 255f + 0.5f).toInt().coerceIn(0, 255)
-        val b = ((accumB[i] / w) * 255f + 0.5f).toInt().coerceIn(0, 255)
+        val r = (accumR[i] / w + 0.5f).toInt().coerceIn(0, 255)
+        val g = (accumG[i] / w + 0.5f).toInt().coerceIn(0, 255)
+        val b = (accumB[i] / w + 0.5f).toInt().coerceIn(0, 255)
         outPixels[i] = Color.rgb(r, g, b)
       }
 
@@ -242,7 +243,7 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
     val target = File(context.noBackupFilesDir, "$MODEL_VERSION-$MODEL_ASSET")
     if (!target.isFile) {
       context.noBackupFilesDir.listFiles()?.forEach { existing ->
-        if (existing.name.endsWith("-$MODEL_ASSET")) {
+        if (existing.name.contains("real_esrgan") && existing != target) {
           existing.delete()
         }
       }
@@ -263,7 +264,7 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
     singleThreadExecutor.shutdown()
   }
 
-  private class QuickSrRunner(
+  private class EsrganPlusRunner(
     context: Context,
     modelFile: File,
     accelerator: Accelerator,
@@ -279,7 +280,6 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
           val cache = File(context.codeCacheDir, "$prefix$MODEL_VERSION.xnnpack_cache")
           context.codeCacheDir.listFiles()?.forEach { file ->
             if (
-              file.name.startsWith(prefix) &&
               file.name.endsWith(".xnnpack_cache") &&
               file != cache
             ) {
@@ -298,18 +298,18 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
       try {
         inputs += model.createInputBuffers()
         outputs += model.createOutputBuffers()
-        // Warm-up inference so GPU shaders compile off the capture critical path
-        infer(FloatArray(INPUT_ELEMENTS))
+        // Warm-up inference so GPU shaders / XNNPACK weights compile off the capture critical path
+        infer(ByteArray(INPUT_ELEMENTS))
       } catch (e: Exception) {
         close()
         throw e
       }
     }
 
-    fun infer(input: FloatArray): FloatArray {
-      inputs[0].writeFloat(input)
+    fun infer(input: ByteArray): ByteArray {
+      inputs[0].writeInt8(input)
       model.run(inputs, outputs)
-      return outputs[0].readFloat()
+      return outputs[0].readInt8()
     }
 
     override fun close() {

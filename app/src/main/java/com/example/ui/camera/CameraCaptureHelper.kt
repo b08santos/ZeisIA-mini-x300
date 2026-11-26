@@ -23,10 +23,10 @@ object CameraCaptureHelper {
     frameCount: Int,
   ): List<CapturedFrameBytes> {
     val frames = mutableListOf<CapturedFrameBytes>()
-    val count = frameCount.coerceIn(1, 3)
+    val count = frameCount.coerceIn(1, 5)
 
     for (index in 0 until count) {
-      val timeoutMs = if (index == 0) 6000L else 1800L
+      val timeoutMs = if (index == 0) 6000L else 1400L
       val frame = withTimeoutOrNull(timeoutMs) {
         captureSingleJpeg(imageCapture, executor)
       }

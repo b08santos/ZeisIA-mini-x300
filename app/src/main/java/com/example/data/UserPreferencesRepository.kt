@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.map
 private val Context.zoomDataStore by preferencesDataStore(name = "zoom_ia_prefs")
 
 data class UserSettings(
+  val cloudAiEnabled: Boolean = false,
   val multiFrameEnabled: Boolean = true,
   val autoSaveEnabled: Boolean = true,
   val gridEnabled: Boolean = true,
@@ -21,6 +22,7 @@ data class UserSettings(
 class UserPreferencesRepository(private val context: Context) {
 
   private object Keys {
+    val CLOUD_AI = booleanPreferencesKey("cloud_ai_enabled")
     val MULTI_FRAME = booleanPreferencesKey("multi_frame_enabled")
     val AUTO_SAVE = booleanPreferencesKey("auto_save_enabled")
     val GRID = booleanPreferencesKey("grid_enabled")
@@ -32,11 +34,16 @@ class UserPreferencesRepository(private val context: Context) {
     val preset = runCatching { EnhancementPreset.valueOf(presetName) }
       .getOrDefault(EnhancementPreset.ULTRA_SHARP)
     UserSettings(
+      cloudAiEnabled = prefs[Keys.CLOUD_AI] ?: false,
       multiFrameEnabled = prefs[Keys.MULTI_FRAME] ?: true,
       autoSaveEnabled = prefs[Keys.AUTO_SAVE] ?: true,
       gridEnabled = prefs[Keys.GRID] ?: true,
       preferredPreset = preset,
     )
+  }
+
+  suspend fun setCloudAi(enabled: Boolean) {
+    context.zoomDataStore.edit { it[Keys.CLOUD_AI] = enabled }
   }
 
   suspend fun setMultiFrame(enabled: Boolean) {

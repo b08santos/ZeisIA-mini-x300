@@ -17,6 +17,8 @@ import com.example.domain.EnhancementPreset
 import com.example.domain.FlashModeOption
 import com.example.domain.SavedPhotoItem
 import com.example.domain.ZoomMath
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -148,6 +150,10 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
     }
   }
 
+  fun setCloudAiEnabled(enabled: Boolean) {
+    viewModelScope.launch { prefsRepository.setCloudAi(enabled) }
+  }
+
   fun setGridEnabled(enabled: Boolean) {
     viewModelScope.launch { prefsRepository.setGrid(enabled) }
   }
@@ -210,6 +216,7 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
           hardwareZoom = snapshot.hardwareZoom,
           digitalCropFactor = snapshot.digitalCropFactor,
           preset = snapshot.settings.preferredPreset,
+          useCloudAi = snapshot.settings.cloudAiEnabled,
         )
 
         // Recycle intermediate burst crops not retained by CaptureResult
@@ -241,11 +248,20 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
             activeScreen = ActiveScreen.RESULT,
           )
         }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: TimeoutCancellationException) {
+        _uiState.update {
+          it.copy(
+            processingPhase = ProcessingPhase.IDLE,
+            errorMessage = "Tempo esgotado na IA na nuvem (60s). Tente novamente ou ative o modo Offline em Configurações.",
+          )
+        }
       } catch (e: Throwable) {
         _uiState.update {
           it.copy(
             processingPhase = ProcessingPhase.IDLE,
-            errorMessage = e.message ?: "Erro ao processar foto com IA.",
+            errorMessage = e.localizedMessage ?: "Erro ao processar foto com IA.",
           )
         }
       }
@@ -255,14 +271,37 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
   fun switchResultPreset(preset: EnhancementPreset) {
     val current = _uiState.value.captureResult ?: return
     if (current.preset == preset) return
+    val useCloudAi = _uiState.value.settings.cloudAiEnabled
     viewModelScope.launch {
-      prefsRepository.setPreferredPreset(preset)
-      val updated = pipeline.reEnhanceWithPreset(current, preset)
-      _uiState.update {
-        it.copy(
-          captureResult = updated.copy(savedUri = null),
-          statusBanner = null,
-        )
+      if (useCloudAi && current.telemetry.totalZoom >= 1.5f) {
+        _uiState.update { it.copy(processingPhase = ProcessingPhase.ENHANCING_AI) }
+      }
+      try {
+        prefsRepository.setPreferredPreset(preset)
+        val updated = pipeline.reEnhanceWithPreset(current, preset, useCloudAi = useCloudAi)
+        _uiState.update {
+          it.copy(
+            processingPhase = ProcessingPhase.IDLE,
+            captureResult = updated.copy(savedUri = null),
+            statusBanner = null,
+          )
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: TimeoutCancellationException) {
+        _uiState.update {
+          it.copy(
+            processingPhase = ProcessingPhase.IDLE,
+            errorMessage = "Tempo esgotado ao aplicar estilo na nuvem (60s).",
+          )
+        }
+      } catch (e: Throwable) {
+        _uiState.update {
+          it.copy(
+            processingPhase = ProcessingPhase.IDLE,
+            errorMessage = e.localizedMessage ?: "Erro ao reprocessar foto.",
+          )
+        }
       }
     }
   }

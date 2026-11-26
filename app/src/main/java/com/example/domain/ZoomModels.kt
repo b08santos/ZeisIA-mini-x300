@@ -30,6 +30,7 @@ data class PipelineTelemetry(
   val digitalCropFactor: Float,
   val framesFused: Int,
   val neuralSrApplied: Boolean,
+  val cloudEnhanced: Boolean = false,
   val acceleratorLabel: String,
   val inputWidth: Int,
   val inputHeight: Int,

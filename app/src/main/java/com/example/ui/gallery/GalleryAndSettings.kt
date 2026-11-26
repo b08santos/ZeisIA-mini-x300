@@ -276,6 +276,7 @@ fun SettingsBottomSheet(
   settings: UserSettings,
   aiAcceleratorLabel: String,
   hardwareMaxZoom: Float,
+  onToggleCloudAi: (Boolean) -> Unit,
   onToggleMultiFrame: (Boolean) -> Unit,
   onToggleAutoSave: (Boolean) -> Unit,
   onToggleGrid: (Boolean) -> Unit,
@@ -299,6 +300,14 @@ fun SettingsBottomSheet(
         text = stringResource(R.string.settings_title),
         style = MaterialTheme.typography.headlineSmall,
         color = Color.White,
+      )
+
+      SettingToggleRow(
+        title = stringResource(R.string.settings_cloud_ai_title),
+        description = stringResource(R.string.settings_cloud_ai_desc),
+        checked = settings.cloudAiEnabled,
+        onCheckedChange = onToggleCloudAi,
+        testTag = "toggle_cloud_ai",
       )
 
       SettingToggleRow(

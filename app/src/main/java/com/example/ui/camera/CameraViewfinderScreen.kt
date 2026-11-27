@@ -22,8 +22,6 @@ import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
-import androidx.camera.extensions.ExtensionMode
-import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.MediaStoreOutputOptions
@@ -66,18 +64,23 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Cameraswitch
 import androidx.compose.material.icons.outlined.CenterFocusStrong
@@ -272,49 +275,19 @@ fun CameraViewfinderScreen(
         .build()
 
       if (uiState.captureMode == CaptureMode.PHOTO) {
-        val extManager = runCatching {
-          ExtensionsManager.getInstanceAsync(context, provider).awaitResult(mainExecutor)
-        }.getOrNull()
-
-        val extMode = when {
-          extManager?.isExtensionAvailable(baseSelector, ExtensionMode.AUTO) == true -> ExtensionMode.AUTO
-          extManager?.isExtensionAvailable(baseSelector, ExtensionMode.HDR) == true -> ExtensionMode.HDR
-          else -> null
-        }
-
-        val boundWithExt = if (extManager != null && extMode != null) {
-          runCatching {
-            val extSelector = extManager.getExtensionEnabledCameraSelector(baseSelector, extMode)
-            bindPhotoUseCases(
-              provider = provider,
-              lifecycleOwner = lifecycleOwner,
-              selector = extSelector,
-              pv = pv,
-              useCamera2HqOptions = false,
-            )
-          }.getOrNull()
-        } else {
-          null
-        }
-
-        if (boundWithExt != null) {
-          boundCamera = boundWithExt.first
-          imageCapture = boundWithExt.second
-          videoCapture = null
-          onSamsungExtensionStatus(true)
-        } else {
-          val fallback = bindPhotoUseCases(
-            provider = provider,
-            lifecycleOwner = lifecycleOwner,
-            selector = baseSelector,
-            pv = pv,
-            useCamera2HqOptions = true,
-          )
-          boundCamera = fallback.first
-          imageCapture = fallback.second
-          videoCapture = null
-          onSamsungExtensionStatus(false)
-        }
+        // Bind directly to native logical back camera so Samsung/OEM Vendor Extensions
+        // cannot crop the 1x FOV, lock out 0.6x ultrawide, or override 4:3 preview framing.
+        val bound = bindPhotoUseCases(
+          provider = provider,
+          lifecycleOwner = lifecycleOwner,
+          selector = baseSelector,
+          pv = pv,
+          useCamera2HqOptions = true,
+        )
+        boundCamera = bound.first
+        imageCapture = bound.second
+        videoCapture = null
+        onSamsungExtensionStatus(false)
       } else {
         val (cam, vidCap, qualityLabel) = bindVideoUseCases(
           provider = provider,
@@ -384,404 +357,486 @@ fun CameraViewfinderScreen(
   val currentOnMultiplyZoom by androidx.compose.runtime.rememberUpdatedState(onMultiplyZoom)
   val isRecording = uiState.isRecordingVideo
 
-  Box(
+  var fullScreenPreview by remember { mutableStateOf(false) }
+
+  BoxWithConstraints(
     modifier = Modifier
       .fillMaxSize()
       .background(ObsidianBg),
   ) {
-    Column(
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val topChrome = statusTop + 60.dp
+    val bottomChrome = navBottom + 154.dp
+    val availH = (maxHeight - topChrome - bottomChrome).coerceAtLeast(180.dp)
+    val isLandscape = maxWidth > maxHeight
+    val targetAspect = when (uiState.captureMode) {
+      CaptureMode.VIDEO -> if (isLandscape) 16f / 9f else 9f / 16f
+      CaptureMode.PHOTO -> if (isLandscape) 4f / 3f else 3f / 4f
+    }
+
+    val targetFrameW: Dp
+    val targetFrameH: Dp
+    val targetTopOffset: Dp
+    if (fullScreenPreview) {
+      targetFrameW = maxWidth
+      targetFrameH = maxHeight
+      targetTopOffset = 0.dp
+    } else {
+      if (maxWidth / targetAspect <= availH) {
+        targetFrameW = maxWidth
+        targetFrameH = maxWidth / targetAspect
+      } else {
+        targetFrameH = availH
+        targetFrameW = availH * targetAspect
+      }
+      targetTopOffset = topChrome + (availH - targetFrameH) / 2f
+    }
+
+    val animFrameW by animateDpAsState(
+      targetValue = targetFrameW,
+      animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+      label = "viewfinder_w",
+    )
+    val animFrameH by animateDpAsState(
+      targetValue = targetFrameH,
+      animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+      label = "viewfinder_h",
+    )
+    val animTopOffset by animateDpAsState(
+      targetValue = targetTopOffset,
+      animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+      label = "viewfinder_top",
+    )
+
+    // Single Live Viewfinder container (smoothly transitions between uncropped 3:4 wide 1x and edge-to-edge full screen)
+    Box(
       modifier = Modifier
-        .fillMaxSize()
-        .statusBarsPadding()
-        .navigationBarsPadding(),
-    ) {
-      // Vivo X300 Top Header Bar on clean black strip above viewfinder
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        if (isRecording) {
-          val recPulseTransition = rememberInfiniteTransition(label = "rec_pulse")
-          val recDotAlpha by recPulseTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 0.28f,
-            animationSpec = infiniteRepeatable(
-              animation = tween(650, easing = FastOutSlowInEasing),
-              repeatMode = RepeatMode.Reverse,
-            ),
-            label = "rec_dot_alpha",
-          )
-          Surface(
-            color = CoralError.copy(alpha = 0.22f),
-            shape = RoundedCornerShape(50),
-            border = BorderStroke(1.dp, CoralError),
-          ) {
-            Row(
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-              Box(
-                modifier = Modifier
-                  .size(9.dp)
-                  .clip(CircleShape)
-                  .background(CoralError.copy(alpha = recDotAlpha)),
-              )
-              Text(
-                text = "REC ${formatDurationMs(uiState.recordingDurationMs)}",
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                color = Color.White,
-              )
-              Text(
-                text = uiState.videoQualityLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = ZeissGold,
-              )
-            }
-          }
-        } else {
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            HudIconButton(
-              onClick = onCycleFlash,
-              testTag = "flash_button",
-              contentDescription = stringResource(R.string.cd_flash),
-            ) {
-              Icon(
-                imageVector = when (uiState.flashMode) {
-                  FlashModeOption.AUTO -> Icons.Outlined.FlashAuto
-                  FlashModeOption.ON -> Icons.Outlined.FlashOn
-                  FlashModeOption.OFF -> Icons.Outlined.FlashOff
-                },
-                contentDescription = stringResource(R.string.cd_flash),
-                tint = if (uiState.flashMode == FlashModeOption.ON) WarmAmber else Color.White,
-                modifier = Modifier.size(19.dp),
-              )
-            }
-
-            HudIconButton(
-              onClick = onToggleGrid,
-              testTag = "grid_button",
-              contentDescription = stringResource(R.string.cd_grid),
-            ) {
-              Icon(
-                imageVector = if (uiState.settings.gridEnabled) Icons.Outlined.GridOn else Icons.Outlined.GridOff,
-                contentDescription = stringResource(R.string.cd_grid),
-                tint = if (uiState.settings.gridEnabled) ZeissGold else Color.White,
-                modifier = Modifier.size(19.dp),
-              )
-            }
-
-            if (uiState.captureMode == CaptureMode.PHOTO) {
-              val isMacro = uiState.lensProfile == LensProfile.MACRO_TELE
-              val macroTint by animateColorAsState(
-                targetValue = if (isMacro) ZeissGold else Color.White,
-                animationSpec = tween(220, easing = FastOutSlowInEasing),
-                label = "macro_tint",
-              )
-              Box(
-                modifier = Modifier
-                  .height(42.dp)
-                  .liquidGlassBubble(
-                    shape = RoundedCornerShape(50),
-                    enabled = !isBusy,
-                    active = isMacro,
-                    activeColor = ZeissGold,
-                    baseBlackAlpha = 0.72f,
-                    pressedScale = 0.87f,
-                    onClick = onToggleLensProfile,
-                  )
-                  .testTag("lens_profile_button"),
-                contentAlignment = Alignment.Center,
-              ) {
-                Row(
-                  modifier = Modifier.padding(horizontal = 12.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                  Icon(
-                    imageVector = if (isMacro) Icons.Outlined.LocalFlorist else Icons.Outlined.CenterFocusStrong,
-                    contentDescription = if (isMacro) "Macro Telefoto" else "Telefoto",
-                    tint = macroTint,
-                    modifier = Modifier.size(16.dp),
-                  )
-                  Text(
-                    text = if (isMacro) "Macro Tele" else "Telefoto",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = macroTint,
-                    maxLines = 1,
-                  )
-                }
-              }
+        .padding(top = animTopOffset)
+        .size(width = animFrameW, height = animFrameH)
+        .align(Alignment.TopCenter)
+        .clipToBounds()
+        .pointerInput(Unit) {
+          detectTransformGestures { _, _, zoomChange, _ ->
+            if (zoomChange != 1f && !currentIsBusy) {
+              currentOnMultiplyZoom(zoomChange)
             }
           }
         }
+        .pointerInput(boundCamera, previewView) {
+          detectTapGestures { offset ->
+            val cam = boundCamera
+            val pv = previewView
+            if (cam != null && pv != null) {
+              tapFocusOffset = offset
+              CameraCaptureHelper.triggerTapToFocus(cam, pv, offset.x, offset.y)
+            }
+          }
+        },
+    ) {
+      val isEmulator = remember { isRunningOnEmulator() }
+      AndroidView(
+        factory = { ctx ->
+          PreviewView(ctx).apply {
+            layoutParams = ViewGroup.LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            implementationMode = if (isEmulator) {
+              PreviewView.ImplementationMode.PERFORMANCE
+            } else {
+              PreviewView.ImplementationMode.COMPATIBLE
+            }
+          }.also { previewView = it }
+        },
+        update = { pv ->
+          pv.scaleX = smoothDigitalCrop
+          pv.scaleY = smoothDigitalCrop
+        },
+        modifier = Modifier.fillMaxSize(),
+      )
 
-        Spacer(modifier = Modifier.width(6.dp))
+      // Optional 3x3 framing grid + extreme zoom center reticle aligned to live frame
+      if (uiState.settings.gridEnabled || uiState.targetZoom >= 12f) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+          if (uiState.settings.gridEnabled) {
+            val lineColor = Color.White.copy(alpha = 0.16f)
+            val stroke = 1.dp.toPx()
+            for (i in 1..2) {
+              val x = size.width * (i / 3f)
+              val y = size.height * (i / 3f)
+              drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = stroke)
+              drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeWidth = stroke)
+            }
+          }
 
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          if (!isRecording) {
-            val engineLabel = when {
-              uiState.captureMode == CaptureMode.VIDEO -> uiState.videoQualityLabel
-              uiState.settings.cloudAiEnabled && uiState.samsungExtensionActive -> "HDR+NUVEM"
-              uiState.settings.cloudAiEnabled -> "IA NUVEM"
-              uiState.samsungExtensionActive -> "SAMSUNG HDR"
-              else -> "OFFLINE ${uiState.aiAcceleratorLabel}"
-            }
-            Box(
-              modifier = Modifier.liquidGlassBubble(
-                shape = RoundedCornerShape(50),
-                active = uiState.captureMode == CaptureMode.VIDEO || uiState.settings.cloudAiEnabled,
-                activeColor = ZeissGold,
-                baseBlackAlpha = 0.70f,
-              ),
-              contentAlignment = Alignment.Center,
-            ) {
-              Text(
-                text = engineLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = when {
-                  uiState.captureMode == CaptureMode.VIDEO -> ZeissGold
-                  uiState.settings.cloudAiEnabled -> ZeissGold
-                  else -> Color.White.copy(alpha = 0.92f)
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-              )
-            }
-
-            HudIconButton(
-              onClick = onOpenSettings,
-              testTag = "settings_button",
-              contentDescription = stringResource(R.string.cd_settings),
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.Tune,
-                contentDescription = stringResource(R.string.cd_settings),
-                tint = Color.White,
-                modifier = Modifier.size(19.dp),
-              )
-            }
-          } else {
-            HudIconButton(
-              onClick = onCycleFlash,
-              testTag = "flash_button",
-              contentDescription = stringResource(R.string.cd_flash),
-            ) {
-              Icon(
-                imageVector = if (uiState.flashMode == FlashModeOption.ON) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
-                contentDescription = stringResource(R.string.cd_flash),
-                tint = if (uiState.flashMode == FlashModeOption.ON) WarmAmber else Color.White,
-                modifier = Modifier.size(19.dp),
-              )
-            }
+          if (uiState.targetZoom >= 12f) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val arm = 12.dp.toPx()
+            val gap = 4.dp.toPx()
+            val reticleColor = ZeissGold.copy(alpha = 0.78f)
+            val sw = 1.5.dp.toPx()
+            drawLine(reticleColor, Offset(cx - arm, cy), Offset(cx - gap, cy), strokeWidth = sw)
+            drawLine(reticleColor, Offset(cx + gap, cy), Offset(cx + arm, cy), strokeWidth = sw)
+            drawLine(reticleColor, Offset(cx, cy - arm), Offset(cx, cy - gap), strokeWidth = sw)
+            drawLine(reticleColor, Offset(cx, cy + gap), Offset(cx, cy + arm), strokeWidth = sw)
           }
         }
       }
 
-      // Live Viewfinder Area: true 3:4 (Photo) or 9:16 (Video) uncropped frame so 1x shows full wide FOV
-      BoxWithConstraints(
-        modifier = Modifier
-          .weight(1f)
-          .fillMaxWidth(),
-        contentAlignment = Alignment.BottomCenter,
+      // Animated tap-to-focus amber optical reticle
+      androidx.compose.animation.AnimatedVisibility(
+        visible = tapFocusOffset != null,
+        enter = fadeIn(tween(140)) + scaleIn(
+          initialScale = 1.32f,
+          animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+          ),
+        ),
+        exit = fadeOut(tween(220)) + scaleOut(targetScale = 0.88f, animationSpec = tween(220)),
       ) {
-        val isLandscape = maxWidth > maxHeight
-        val targetAspect = when (uiState.captureMode) {
-          CaptureMode.VIDEO -> if (isLandscape) 16f / 9f else 9f / 16f
-          CaptureMode.PHOTO -> if (isLandscape) 4f / 3f else 3f / 4f
+        tapFocusOffset?.let { pos ->
+          val halfPx = with(LocalDensity.current) { 30.dp.toPx() }
+          Box(
+            modifier = Modifier
+              .offset {
+                IntOffset(
+                  (pos.x - halfPx).roundToInt(),
+                  (pos.y - halfPx).roundToInt(),
+                )
+              }
+              .size(60.dp)
+              .border(1.5.dp, WarmAmber, RoundedCornerShape(14.dp)),
+          )
         }
-        val frameW: Dp
-        val frameH: Dp
-        if (maxWidth / targetAspect <= maxHeight) {
-          frameW = maxWidth
-          frameH = maxWidth / targetAspect
-        } else {
-          frameH = maxHeight
-          frameW = maxHeight * targetAspect
-        }
+      }
 
+      // Smooth crossfade veil during Foto <-> Vídeo Pro or lens switch + shutter flash
+      val switchVeilAlpha by animateFloatAsState(
+        targetValue = if (isCameraSwitching) 0.55f else 0f,
+        animationSpec = tween(240, easing = FastOutSlowInEasing),
+        label = "camera_switch_veil",
+      )
+      val overlayAlpha = maxOf(switchVeilAlpha, shutterFlash.value)
+      if (overlayAlpha > 0.005f) {
         Box(
           modifier = Modifier
-            .size(width = frameW, height = frameH)
-            .clipToBounds()
-            .pointerInput(Unit) {
-              detectTransformGestures { _, _, zoomChange, _ ->
-                if (zoomChange != 1f && !currentIsBusy) {
-                  currentOnMultiplyZoom(zoomChange)
-                }
-              }
-            }
-            .pointerInput(boundCamera, previewView) {
-              detectTapGestures { offset ->
-                val cam = boundCamera
-                val pv = previewView
-                if (cam != null && pv != null) {
-                  tapFocusOffset = offset
-                  CameraCaptureHelper.triggerTapToFocus(cam, pv, offset.x, offset.y)
-                }
-              }
-            },
-        ) {
-          val isEmulator = remember { isRunningOnEmulator() }
-          AndroidView(
-            factory = { ctx ->
-              PreviewView(ctx).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                  ViewGroup.LayoutParams.MATCH_PARENT,
-                  ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-                scaleType = PreviewView.ScaleType.FIT_CENTER
-                implementationMode = if (isEmulator) {
-                  PreviewView.ImplementationMode.PERFORMANCE
-                } else {
-                  PreviewView.ImplementationMode.COMPATIBLE
-                }
-              }.also { previewView = it }
-            },
-            update = { pv ->
-              pv.scaleX = smoothDigitalCrop
-              pv.scaleY = smoothDigitalCrop
-            },
-            modifier = Modifier.fillMaxSize(),
-          )
-
-          // Optional 3x3 framing grid + extreme zoom center reticle aligned to exact photo frame
-          if (uiState.settings.gridEnabled || uiState.targetZoom >= 12f) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-              if (uiState.settings.gridEnabled) {
-                val lineColor = Color.White.copy(alpha = 0.16f)
-                val stroke = 1.dp.toPx()
-                for (i in 1..2) {
-                  val x = size.width * (i / 3f)
-                  val y = size.height * (i / 3f)
-                  drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = stroke)
-                  drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeWidth = stroke)
-                }
-              }
-
-              if (uiState.targetZoom >= 12f) {
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                val arm = 12.dp.toPx()
-                val gap = 4.dp.toPx()
-                val reticleColor = ZeissGold.copy(alpha = 0.78f)
-                val sw = 1.5.dp.toPx()
-                drawLine(reticleColor, Offset(cx - arm, cy), Offset(cx - gap, cy), strokeWidth = sw)
-                drawLine(reticleColor, Offset(cx + gap, cy), Offset(cx + arm, cy), strokeWidth = sw)
-                drawLine(reticleColor, Offset(cx, cy - arm), Offset(cx, cy - gap), strokeWidth = sw)
-                drawLine(reticleColor, Offset(cx, cy + gap), Offset(cx, cy + arm), strokeWidth = sw)
-              }
-            }
-          }
-
-          // Animated tap-to-focus amber optical reticle
-          androidx.compose.animation.AnimatedVisibility(
-            visible = tapFocusOffset != null,
-            enter = fadeIn(tween(140)) + scaleIn(
-              initialScale = 1.32f,
-              animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium,
-              ),
+            .fillMaxSize()
+            .background(
+              if (shutterFlash.value > switchVeilAlpha) {
+                Color.White.copy(alpha = shutterFlash.value)
+              } else {
+                ObsidianBg.copy(alpha = switchVeilAlpha)
+              },
             ),
-            exit = fadeOut(tween(220)) + scaleOut(targetScale = 0.88f, animationSpec = tween(220)),
-          ) {
-            tapFocusOffset?.let { pos ->
-              val halfPx = with(LocalDensity.current) { 30.dp.toPx() }
-              Box(
-                modifier = Modifier
-                  .offset {
-                    IntOffset(
-                      (pos.x - halfPx).roundToInt(),
-                      (pos.y - halfPx).roundToInt(),
-                    )
-                  }
-                  .size(60.dp)
-                  .border(1.5.dp, WarmAmber, RoundedCornerShape(14.dp)),
-              )
-            }
-          }
+        )
+      }
+    }
 
-          // Smooth crossfade veil during Foto <-> Vídeo Pro or lens switch + shutter flash
-          val switchVeilAlpha by animateFloatAsState(
-            targetValue = if (isCameraSwitching) 0.55f else 0f,
-            animationSpec = tween(240, easing = FastOutSlowInEasing),
-            label = "camera_switch_veil",
-          )
-          val overlayAlpha = maxOf(switchVeilAlpha, shutterFlash.value)
-          if (overlayAlpha > 0.005f) {
+    // Subtle top & bottom gradient scrims for crisp readability in Cheia mode
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .height(topChrome + 36.dp)
+        .align(Alignment.TopCenter)
+        .background(
+          Brush.verticalGradient(
+            listOf(ObsidianBg.copy(alpha = if (fullScreenPreview) 0.72f else 0.35f), Color.Transparent),
+          ),
+        ),
+    )
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .height(bottomChrome + 96.dp)
+        .align(Alignment.BottomCenter)
+        .background(
+          Brush.verticalGradient(
+            listOf(Color.Transparent, ObsidianBg.copy(alpha = if (fullScreenPreview) 0.84f else 0.50f)),
+          ),
+        ),
+    )
+
+    // Vivo X300 Top Header Bar
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .align(Alignment.TopCenter)
+        .statusBarsPadding()
+        .padding(horizontal = 10.dp, vertical = 8.dp),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      if (isRecording) {
+        val recPulseTransition = rememberInfiniteTransition(label = "rec_pulse")
+        val recDotAlpha by recPulseTransition.animateFloat(
+          initialValue = 1f,
+          targetValue = 0.28f,
+          animationSpec = infiniteRepeatable(
+            animation = tween(650, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+          ),
+          label = "rec_dot_alpha",
+        )
+        Surface(
+          color = CoralError.copy(alpha = 0.22f),
+          shape = RoundedCornerShape(50),
+          border = BorderStroke(1.dp, CoralError),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
             Box(
               modifier = Modifier
-                .fillMaxSize()
-                .background(
-                  if (shutterFlash.value > switchVeilAlpha) {
-                    Color.White.copy(alpha = shutterFlash.value)
-                  } else {
-                    ObsidianBg.copy(alpha = switchVeilAlpha)
-                  },
-                ),
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(CoralError.copy(alpha = recDotAlpha)),
             )
-          }
-
-          // Zoom Radar Minimap inside top-right corner of the live frame
-          androidx.compose.animation.AnimatedVisibility(
-            visible = uiState.targetZoom >= 12f && uiState.captureMode == CaptureMode.PHOTO,
-            enter = fadeIn() + scaleIn(),
-            exit = fadeOut() + scaleOut(),
-            modifier = Modifier
-              .align(Alignment.TopEnd)
-              .padding(top = 14.dp, end = 14.dp),
-          ) {
-            ZoomRadarMinimap(
-              totalZoom = uiState.targetZoom,
-              digitalCropFactor = uiState.digitalCropFactor,
+            Text(
+              text = "REC ${formatDurationMs(uiState.recordingDurationMs)}",
+              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+              color = Color.White,
+            )
+            Text(
+              text = uiState.videoQualityLabel,
+              style = MaterialTheme.typography.labelSmall,
+              color = ZeissGold,
             )
           }
         }
+      } else {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(5.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          HudIconButton(
+            onClick = onCycleFlash,
+            testTag = "flash_button",
+            contentDescription = stringResource(R.string.cd_flash),
+          ) {
+            Icon(
+              imageVector = when (uiState.flashMode) {
+                FlashModeOption.AUTO -> Icons.Outlined.FlashAuto
+                FlashModeOption.ON -> Icons.Outlined.FlashOn
+                FlashModeOption.OFF -> Icons.Outlined.FlashOff
+              },
+              contentDescription = stringResource(R.string.cd_flash),
+              tint = if (uiState.flashMode == FlashModeOption.ON) WarmAmber else Color.White,
+              modifier = Modifier.size(18.dp),
+            )
+          }
 
-        // Subtle bottom vignette + Zoom Strip / Vivo X300 Half-Moon Dial over bottom edge of viewfinder
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(148.dp)
-            .align(Alignment.BottomCenter)
-            .background(
-              Brush.verticalGradient(
-                listOf(Color.Transparent, ObsidianBg.copy(alpha = 0.55f)),
-              ),
-            ),
-        )
-        ZeissRotaryZoomControl(
-          targetZoom = uiState.targetZoom,
-          hardwareMinZoom = uiState.hardwareMinZoom,
-          hardwareMaxZoom = uiState.hardwareMaxZoom,
-          maxZoom = uiState.maxZoomForCurrentMode,
-          lensProfile = uiState.lensProfile,
-          enabled = !isBusy,
-          onZoomChanged = onZoomChanged,
-          modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .padding(bottom = 10.dp),
-        )
+          HudIconButton(
+            onClick = onToggleGrid,
+            testTag = "grid_button",
+            contentDescription = stringResource(R.string.cd_grid),
+          ) {
+            Icon(
+              imageVector = if (uiState.settings.gridEnabled) Icons.Outlined.GridOn else Icons.Outlined.GridOff,
+              contentDescription = stringResource(R.string.cd_grid),
+              tint = if (uiState.settings.gridEnabled) ZeissGold else Color.White,
+              modifier = Modifier.size(18.dp),
+            )
+          }
+
+          // Aspect ratio toggle: 3:4 (max 1x wide FOV) <-> Cheia (full-screen edge-to-edge)
+          val aspectTint by animateColorAsState(
+            targetValue = if (fullScreenPreview) ZeissGold else Color.White,
+            animationSpec = tween(200, easing = FastOutSlowInEasing),
+            label = "aspect_tint",
+          )
+          Box(
+            modifier = Modifier
+              .height(40.dp)
+              .minimumInteractiveComponentSize()
+              .liquidGlassBubble(
+                shape = RoundedCornerShape(50),
+                active = fullScreenPreview,
+                activeColor = ZeissGold,
+                baseBlackAlpha = 0.72f,
+                pressedScale = 0.87f,
+                onClick = { fullScreenPreview = !fullScreenPreview },
+              )
+              .testTag("aspect_ratio_button"),
+            contentAlignment = Alignment.Center,
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 9.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.AspectRatio,
+                contentDescription = if (fullScreenPreview) "Tela Cheia" else "Proporção 3:4",
+                tint = aspectTint,
+                modifier = Modifier.size(14.dp),
+              )
+              Text(
+                text = if (fullScreenPreview) "Cheia" else if (uiState.captureMode == CaptureMode.VIDEO) "9:16" else "3:4",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = aspectTint,
+                maxLines = 1,
+              )
+            }
+          }
+
+          if (uiState.captureMode == CaptureMode.PHOTO) {
+            val isMacro = uiState.lensProfile == LensProfile.MACRO_TELE
+            val macroTint by animateColorAsState(
+              targetValue = if (isMacro) ZeissGold else Color.White,
+              animationSpec = tween(220, easing = FastOutSlowInEasing),
+              label = "macro_tint",
+            )
+            Box(
+              modifier = Modifier
+                .height(40.dp)
+                .minimumInteractiveComponentSize()
+                .liquidGlassBubble(
+                  shape = RoundedCornerShape(50),
+                  enabled = !isBusy,
+                  active = isMacro,
+                  activeColor = ZeissGold,
+                  baseBlackAlpha = 0.72f,
+                  pressedScale = 0.87f,
+                  onClick = onToggleLensProfile,
+                )
+                .testTag("lens_profile_button"),
+              contentAlignment = Alignment.Center,
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Icon(
+                  imageVector = if (isMacro) Icons.Outlined.LocalFlorist else Icons.Outlined.CenterFocusStrong,
+                  contentDescription = if (isMacro) "Macro Telefoto" else "Telefoto",
+                  tint = macroTint,
+                  modifier = Modifier.size(15.dp),
+                )
+                Text(
+                  text = if (isMacro) "Macro" else "Tele",
+                  style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                  color = macroTint,
+                  maxLines = 1,
+                )
+              }
+            }
+          }
+        }
       }
 
-      // Bottom Control Deck (Foto | Vídeo Pro + Gallery / Concentric Shutter / IA+ / Flip) on clean black
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(top = 12.dp, bottom = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+      Spacer(modifier = Modifier.width(4.dp))
+
+      Row(
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
       ) {
+        if (!isRecording) {
+          val engineLabel = when {
+            uiState.captureMode == CaptureMode.VIDEO -> uiState.videoQualityLabel
+            uiState.settings.cloudAiEnabled -> "NUVEM"
+            else -> "OFFLINE"
+          }
+          Box(
+            modifier = Modifier.liquidGlassBubble(
+              shape = RoundedCornerShape(50),
+              active = uiState.captureMode == CaptureMode.VIDEO || uiState.settings.cloudAiEnabled,
+              activeColor = ZeissGold,
+              baseBlackAlpha = 0.70f,
+            ),
+            contentAlignment = Alignment.Center,
+          ) {
+            Text(
+              text = engineLabel,
+              style = MaterialTheme.typography.labelSmall,
+              color = when {
+                uiState.captureMode == CaptureMode.VIDEO -> ZeissGold
+                uiState.settings.cloudAiEnabled -> ZeissGold
+                else -> Color.White.copy(alpha = 0.92f)
+              },
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
+            )
+          }
+
+          HudIconButton(
+            onClick = onOpenSettings,
+            testTag = "settings_button",
+            contentDescription = stringResource(R.string.cd_settings),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Tune,
+              contentDescription = stringResource(R.string.cd_settings),
+              tint = Color.White,
+              modifier = Modifier.size(18.dp),
+            )
+          }
+        } else {
+          HudIconButton(
+            onClick = onCycleFlash,
+            testTag = "flash_button",
+            contentDescription = stringResource(R.string.cd_flash),
+          ) {
+            Icon(
+              imageVector = if (uiState.flashMode == FlashModeOption.ON) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
+              contentDescription = stringResource(R.string.cd_flash),
+              tint = if (uiState.flashMode == FlashModeOption.ON) WarmAmber else Color.White,
+              modifier = Modifier.size(18.dp),
+            )
+          }
+        }
+      }
+    }
+
+    // Zoom Radar Minimap inside top-right corner of live viewfinder
+    androidx.compose.animation.AnimatedVisibility(
+      visible = uiState.targetZoom >= 12f && uiState.captureMode == CaptureMode.PHOTO,
+      enter = fadeIn() + scaleIn(),
+      exit = fadeOut() + scaleOut(),
+      modifier = Modifier
+        .align(Alignment.TopEnd)
+        .padding(top = animTopOffset + 14.dp, end = 14.dp),
+    ) {
+      ZoomRadarMinimap(
+        totalZoom = uiState.targetZoom,
+        digitalCropFactor = uiState.digitalCropFactor,
+      )
+    }
+
+    // Zoom Strip + Vivo X300 Half-Moon Dial anchored cleanly at the bottom edge of the live frame
+    val zoomBottomPad = maxOf(
+      bottomChrome + 6.dp,
+      (maxHeight - animTopOffset - animFrameH) + 8.dp,
+    )
+    ZeissRotaryZoomControl(
+      targetZoom = uiState.targetZoom,
+      hardwareMinZoom = uiState.hardwareMinZoom,
+      hardwareMaxZoom = uiState.hardwareMaxZoom,
+      maxZoom = uiState.maxZoomForCurrentMode,
+      lensProfile = uiState.lensProfile,
+      enabled = !isBusy,
+      onZoomChanged = onZoomChanged,
+      modifier = Modifier
+        .align(Alignment.BottomCenter)
+        .padding(bottom = zoomBottomPad),
+    )
+
+    // Bottom Control Deck (Foto | Vídeo Pro + Gallery / Concentric Shutter / IA+ / Flip)
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .align(Alignment.BottomCenter)
+        .navigationBarsPadding()
+        .padding(top = 10.dp, bottom = 14.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
 
       // Clean Vivo-style Foto | Vídeo Pro strip
       Row(
@@ -1039,7 +1094,6 @@ fun CameraViewfinderScreen(
             )
           }
         }
-      }
       }
     }
 
@@ -1319,7 +1373,8 @@ private fun HudIconButton(
 ) {
   Box(
     modifier = Modifier
-      .size(48.dp)
+      .size(42.dp)
+      .minimumInteractiveComponentSize()
       .liquidGlassBubble(
         shape = CircleShape,
         baseBlackAlpha = 0.68f,

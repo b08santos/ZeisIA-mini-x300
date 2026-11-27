@@ -3,6 +3,7 @@ package com.example.ai
 import android.graphics.Bitmap
 import android.graphics.Color
 import com.example.domain.EnhancementPreset
+import com.example.domain.LensProfile
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
@@ -26,6 +27,7 @@ object FlagshipImageEnhancer {
     zoomRatio: Float,
     preset: EnhancementPreset,
     neuralSrApplied: Boolean = false,
+    lensProfile: LensProfile = LensProfile.TELEPHOTO,
   ): Bitmap {
     val width = source.width
     val height = source.height
@@ -90,20 +92,22 @@ object FlagshipImageEnhancer {
       )
     }
 
-    // 3. Halo-free micro-contrast for architectural, brick, foliage & window depth
-    val microContrastStrength = when (preset) {
+    // 3. Halo-free micro-contrast for architectural, brick, foliage & macro micro-texture depth
+    val macroBoost = if (lensProfile == LensProfile.MACRO_TELE) 0.10f else 0f
+    val microContrastStrength = (when (preset) {
       EnhancementPreset.NATURAL -> 0.16f
       EnhancementPreset.ULTRA_SHARP -> 0.28f + 0.08f * zoomFactor
       EnhancementPreset.TEXT_DETAIL -> 0.42f
-    }
+    } + macroBoost).coerceAtMost(0.55f)
     val texturedY = microContrastDetail(deconvolvedY, width, height, strength = microContrastStrength)
 
     // 4. Contrast Adaptive Sharpening (CAS) with strict local overshoot clamping
-    val casStrength = when (preset) {
+    val casMacroBoost = if (lensProfile == LensProfile.MACRO_TELE) 0.08f else 0f
+    val casStrength = (when (preset) {
       EnhancementPreset.NATURAL -> if (neuralSrApplied) 0.25f else 0.36f
       EnhancementPreset.ULTRA_SHARP -> if (neuralSrApplied) 0.48f else 0.62f
       EnhancementPreset.TEXT_DETAIL -> if (neuralSrApplied) 0.70f else 0.84f
-    }
+    } + casMacroBoost).coerceAtMost(0.92f)
     val sharpY = contrastAdaptiveSharpen(texturedY, width, height, strength = casStrength)
 
     // 5. Filmic black-point & highlight-safe S-curve LUT + balanced vibrance

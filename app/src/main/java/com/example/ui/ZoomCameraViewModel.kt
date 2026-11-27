@@ -17,6 +17,7 @@ import com.example.domain.CaptureMode
 import com.example.domain.CaptureResult
 import com.example.domain.EnhancementPreset
 import com.example.domain.FlashModeOption
+import com.example.domain.LensProfile
 import com.example.domain.SavedPhotoItem
 import com.example.domain.ZoomMath
 import kotlinx.coroutines.CancellationException
@@ -43,6 +44,7 @@ enum class ProcessingPhase {
 data class CameraUiState(
   val activeScreen: ActiveScreen = ActiveScreen.CAMERA,
   val captureMode: CaptureMode = CaptureMode.PHOTO,
+  val lensProfile: LensProfile = LensProfile.TELEPHOTO,
   val targetZoom: Float = 1f,
   val hardwareMinZoom: Float = 1f,
   val hardwareMaxZoom: Float = 8f,
@@ -130,6 +132,50 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
         digitalCropFactor = digital,
         statusBanner = null,
       )
+    }
+  }
+
+  fun toggleLensProfile() {
+    _uiState.update { state ->
+      if (state.isRecordingVideo) return@update state
+      val nextProfile = if (state.lensProfile == LensProfile.TELEPHOTO) {
+        LensProfile.MACRO_TELE
+      } else {
+        LensProfile.TELEPHOTO
+      }
+      val nextZoom = if (nextProfile == LensProfile.MACRO_TELE && state.targetZoom < 2.5f) {
+        3.7f.coerceIn(state.hardwareMinZoom, state.maxZoomForCurrentMode)
+      } else {
+        state.targetZoom
+      }
+      val (hw, digital) = ZoomMath.splitZoom(nextZoom, state.hardwareMinZoom, state.hardwareMaxZoom)
+      state.copy(
+        lensProfile = nextProfile,
+        targetZoom = nextZoom,
+        hardwareZoom = hw,
+        digitalCropFactor = digital,
+        statusBanner = if (nextProfile == LensProfile.MACRO_TELE) {
+          "Lente Macro Telefoto ativada (ideal para insetos e detalhes)"
+        } else {
+          "Lente Telefoto ativada"
+        },
+      )
+    }
+  }
+
+  fun toggleCloudAiQuick() {
+    val nextEnabled = !_uiState.value.settings.cloudAiEnabled
+    viewModelScope.launch {
+      prefsRepository.setCloudAi(nextEnabled)
+      _uiState.update {
+        it.copy(
+          statusBanner = if (nextEnabled) {
+            "IA Nuvem ativada (Gemini + crédito grátis)"
+          } else {
+            "Motor Offline Pro ativado (100% grátis)"
+          },
+        )
+      }
     }
   }
 
@@ -296,6 +342,7 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
           digitalCropFactor = snapshot.digitalCropFactor,
           preset = snapshot.settings.preferredPreset,
           useCloudAi = snapshot.settings.cloudAiEnabled,
+          lensProfile = snapshot.lensProfile,
         )
 
         // Recycle intermediate burst crops not retained by CaptureResult
@@ -448,6 +495,10 @@ class ZoomCameraViewModel(application: Application) : AndroidViewModel(applicati
 
   fun dismissError() {
     _uiState.update { it.copy(errorMessage = null) }
+  }
+
+  fun dismissBanner() {
+    _uiState.update { it.copy(statusBanner = null) }
   }
 
   override fun onCleared() {

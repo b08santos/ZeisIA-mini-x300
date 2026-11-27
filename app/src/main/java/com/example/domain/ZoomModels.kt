@@ -29,6 +29,11 @@ enum class CaptureMode {
   VIDEO,
 }
 
+enum class LensProfile {
+  TELEPHOTO,
+  MACRO_TELE,
+}
+
 data class PipelineTelemetry(
   val totalZoom: Float,
   val hardwareZoom: Float,
@@ -36,6 +41,7 @@ data class PipelineTelemetry(
   val framesFused: Int,
   val neuralSrApplied: Boolean,
   val cloudEnhanced: Boolean = false,
+  val lensProfile: LensProfile = LensProfile.TELEPHOTO,
   val acceleratorLabel: String,
   val inputWidth: Int,
   val inputHeight: Int,

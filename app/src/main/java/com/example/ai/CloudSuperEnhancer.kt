@@ -3,6 +3,7 @@ package com.example.ai
 import android.graphics.Bitmap
 import android.util.Log
 import com.example.domain.EnhancementPreset
+import com.example.domain.LensProfile
 import com.example.domain.ZoomMath
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
@@ -44,10 +45,11 @@ object CloudSuperEnhancer {
     source: Bitmap,
     zoomRatio: Float,
     preset: EnhancementPreset,
+    lensProfile: LensProfile = LensProfile.TELEPHOTO,
   ): Bitmap {
     // Keep upload payload fast and well under the 20MB inline media ceiling
     val prepared = prepareForUpload(source, maxLongEdge = 1280)
-    val prompt = buildRestorationPrompt(zoomRatio, preset)
+    val prompt = buildRestorationPrompt(zoomRatio, preset, lensProfile)
 
     return try {
       val response = withTimeout(60_000L) {
@@ -87,24 +89,32 @@ object CloudSuperEnhancer {
     )
   }
 
-  private fun buildRestorationPrompt(
+  internal fun buildRestorationPrompt(
     zoomRatio: Float,
     preset: EnhancementPreset,
+    lensProfile: LensProfile,
   ): String {
     val zoomLabel = ZoomMath.formatZoomLabel(zoomRatio)
+    val lensContext = when (lensProfile) {
+      LensProfile.MACRO_TELE ->
+        "This is a Vivo X300-style Telephoto Macro close-up shot at $zoomLabel magnification. Reconstruct ultra-fine macro textures (such as insect compound eyes, wing veins, tiny hairs, pollen, water droplets, leaf veins, or fabric weave) on the focal subject while keeping natural shallow-depth optical background bokeh."
+      LensProfile.TELEPHOTO ->
+        "This is a $zoomLabel telephoto zoomed smartphone photograph. Reconstruct crisp distant details (architectural lines, windows, foliage, signs, and natural textures)."
+    }
     val presetFocus = when (preset) {
       EnhancementPreset.NATURAL ->
         "Keep true-to-life photographic realism, natural colors, balanced shadows, and subtle authentic textures."
       EnhancementPreset.ULTRA_SHARP ->
-        "Deliver flagship telephoto clarity (like a Vivo X300 Ultra / Zeiss lens): crisp architectural lines, detailed windows, sharp roof tiles, textured trees, and rich contrast."
+        "Deliver flagship Zeiss lens clarity: crisp micro-edges, rich micro-contrast, and clean natural textures."
       EnhancementPreset.TEXT_DETAIL ->
-        "Maximize edge definition and legibility of distant signs, numbers, text, window grids, and fine structural lines while keeping photorealism."
+        "Maximize edge definition and legibility of fine structures, signs, numbers, text, and intricate micro-lines while keeping photorealism."
     }
     return """
-      Enhance and restore the sharpness and fine details of this $zoomLabel zoomed smartphone photograph.
+      Enhance and restore the sharpness and fine details of this photograph.
+      $lensContext
       Strict rules:
-      1. Keep 100% of the exact original framing, objects, buildings, perspective, colors, lighting, and exposure. Do NOT add, remove, or invent objects.
-      2. Remove telephoto blur, JPEG compression artifacts, and grain, reconstructing photorealistic fine textures and crisp edges.
+      1. Keep 100% of the exact original framing, objects, perspective, colors, lighting, and exposure. Do NOT add, remove, or invent objects.
+      2. Remove optical/motion blur, JPEG compression artifacts, and grain, reconstructing photorealistic fine textures and crisp edges.
       3. Never make the photo brighter, washed-out, milky, or painted/cartoonish. Keep real photographic grain-free textures.
       $presetFocus
     """.trimIndent()

@@ -8,6 +8,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import com.example.domain.CaptureResult
 import com.example.domain.EnhancementPreset
+import com.example.domain.LensProfile
 import com.example.domain.PipelineTelemetry
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -129,6 +130,7 @@ class ZoomEnhancementPipeline(
     digitalCropFactor: Float,
     preset: EnhancementPreset,
     useCloudAi: Boolean,
+    lensProfile: LensProfile = LensProfile.TELEPHOTO,
   ): CaptureResult = withContext(Dispatchers.Default) {
     val startNs = System.nanoTime()
     val refFrame = frames.first()
@@ -146,6 +148,7 @@ class ZoomEnhancementPipeline(
         source = fused,
         zoomRatio = totalZoom,
         preset = preset,
+        lensProfile = lensProfile,
       )
       val originalCompare = if (
         refFrame.width == cloudBitmap.width && refFrame.height == cloudBitmap.height
@@ -167,6 +170,7 @@ class ZoomEnhancementPipeline(
           framesFused = frames.size,
           neuralSrApplied = true,
           cloudEnhanced = true,
+          lensProfile = lensProfile,
           acceleratorLabel = "Nuvem",
           inputWidth = inputW,
           inputHeight = inputH,
@@ -230,6 +234,7 @@ class ZoomEnhancementPipeline(
       zoomRatio = totalZoom,
       preset = preset,
       neuralSrApplied = neuralSrApplied,
+      lensProfile = lensProfile,
     )
 
     val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
@@ -240,6 +245,7 @@ class ZoomEnhancementPipeline(
       framesFused = frames.size,
       neuralSrApplied = neuralSrApplied,
       cloudEnhanced = false,
+      lensProfile = lensProfile,
       acceleratorLabel = if (neuralSrApplied) superResolutionEngine.activeAcceleratorLabel else "Óptico Pro",
       inputWidth = inputW,
       inputHeight = inputH,
@@ -292,6 +298,7 @@ class ZoomEnhancementPipeline(
         source = current.baseSrBitmap,
         zoomRatio = current.telemetry.totalZoom,
         preset = newPreset,
+        lensProfile = current.telemetry.lensProfile,
       )
       val originalResized = if (
         current.originalCropBitmap.width == cloudBitmap.width &&
@@ -327,6 +334,7 @@ class ZoomEnhancementPipeline(
       zoomRatio = current.telemetry.totalZoom,
       preset = newPreset,
       neuralSrApplied = current.telemetry.neuralSrApplied && !current.telemetry.cloudEnhanced,
+      lensProfile = current.telemetry.lensProfile,
     )
     val elapsedMs = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtLeast(1L)
     current.copy(

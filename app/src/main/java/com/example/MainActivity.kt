@@ -13,6 +13,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -142,6 +151,7 @@ fun ZoomIAApp(viewModel: ZoomCameraViewModel = viewModel()) {
   LaunchedEffect(uiState.statusBanner) {
     uiState.statusBanner?.let { msg ->
       snackbarHostState.showSnackbar(msg)
+      viewModel.dismissBanner()
     }
   }
 
@@ -168,6 +178,25 @@ fun ZoomIAApp(viewModel: ZoomCameraViewModel = viewModel()) {
     } else {
       AnimatedContent(
         targetState = uiState.activeScreen,
+        transitionSpec = {
+          val enterSpec = tween<androidx.compose.ui.unit.IntOffset>(280, easing = FastOutSlowInEasing)
+          val fadeEnter = fadeIn(tween(240, easing = FastOutSlowInEasing))
+          val fadeExit = fadeOut(tween(200, easing = FastOutSlowInEasing))
+          when (targetState) {
+            ActiveScreen.RESULT -> {
+              (fadeEnter + scaleIn(initialScale = 0.94f, animationSpec = tween(280, easing = FastOutSlowInEasing)))
+                .togetherWith(fadeExit + scaleOut(targetScale = 1.03f, animationSpec = tween(220)))
+            }
+            ActiveScreen.GALLERY -> {
+              (slideInHorizontally(enterSpec) { it / 5 } + fadeEnter)
+                .togetherWith(slideOutHorizontally(tween(240, easing = FastOutSlowInEasing)) { -it / 6 } + fadeExit)
+            }
+            ActiveScreen.CAMERA -> {
+              (slideInHorizontally(enterSpec) { -it / 6 } + fadeEnter)
+                .togetherWith(slideOutHorizontally(tween(240, easing = FastOutSlowInEasing)) { it / 5 } + fadeExit)
+            }
+          }
+        },
         label = "screen_transition",
       ) { screen ->
         when (screen) {
@@ -182,6 +211,8 @@ fun ZoomIAApp(viewModel: ZoomCameraViewModel = viewModel()) {
               onVideoRecordingProgress = viewModel::onVideoRecordingProgress,
               onVideoRecordingFinalized = viewModel::onVideoRecordingFinalized,
               onCaptureModeChanged = viewModel::setCaptureMode,
+              onToggleLensProfile = viewModel::toggleLensProfile,
+              onToggleCloudAiQuick = viewModel::toggleCloudAiQuick,
               onZoomChanged = viewModel::setTargetZoom,
               onMultiplyZoom = viewModel::multiplyZoom,
               onToggleLens = viewModel::toggleLensFacing,

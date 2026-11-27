@@ -1,9 +1,13 @@
 package com.example
 
+import com.example.ai.CloudSuperEnhancer
 import com.example.ai.FlagshipImageEnhancer
 import com.example.ai.ZoomEnhancementPipeline
 import com.example.data.UserSettings
 import com.example.domain.CaptureMode
+import com.example.domain.EnhancementPreset
+import com.example.domain.LensProfile
+import com.example.domain.PipelineTelemetry
 import com.example.domain.ZoomMath
 import com.example.domain.ZoomMode
 import com.example.ui.CameraUiState
@@ -111,5 +115,43 @@ class ExampleUnitTest {
 
     val videoState = CameraUiState(captureMode = CaptureMode.VIDEO, hardwareMaxZoom = 10f)
     assertEquals(10f, videoState.maxZoomForCurrentMode, 0.001f)
+  }
+
+  @Test
+  fun macro_tele_lens_profile_configures_macro_restoration_and_defaults() {
+    val defaultState = CameraUiState()
+    assertEquals(LensProfile.TELEPHOTO, defaultState.lensProfile)
+
+    val telemetry = PipelineTelemetry(
+      totalZoom = 3.7f,
+      hardwareZoom = 3.7f,
+      digitalCropFactor = 1f,
+      framesFused = 4,
+      neuralSrApplied = false,
+      lensProfile = LensProfile.MACRO_TELE,
+      acceleratorLabel = "XNNPACK",
+      inputWidth = 1000,
+      inputHeight = 1000,
+      outputWidth = 1000,
+      outputHeight = 1000,
+      processingTimeMs = 120L,
+    )
+    assertEquals(LensProfile.MACRO_TELE, telemetry.lensProfile)
+
+    val macroPrompt = CloudSuperEnhancer.buildRestorationPrompt(
+      zoomRatio = 7.4f,
+      preset = EnhancementPreset.ULTRA_SHARP,
+      lensProfile = LensProfile.MACRO_TELE,
+    )
+    assertTrue(macroPrompt.contains("Telephoto Macro"))
+    assertTrue(macroPrompt.contains("bokeh"))
+
+    val telePrompt = CloudSuperEnhancer.buildRestorationPrompt(
+      zoomRatio = 10f,
+      preset = EnhancementPreset.NATURAL,
+      lensProfile = LensProfile.TELEPHOTO,
+    )
+    assertTrue(telePrompt.contains("telephoto zoomed"))
+    assertFalse(telePrompt.contains("Telephoto Macro"))
   }
 }

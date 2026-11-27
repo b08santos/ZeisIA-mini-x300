@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.domain.CaptureResult
 import com.example.domain.EnhancementPreset
+import com.example.domain.LensProfile
 import com.example.domain.ZoomMath
 import com.example.ui.ProcessingPhase
 import com.example.ui.theme.ElectricCyan
@@ -142,10 +143,11 @@ fun EnhancementResultScreen(
           style = MaterialTheme.typography.titleMedium,
           color = Color.White,
         )
+        val lensPrefix = if (result.telemetry.lensProfile == LensProfile.MACRO_TELE) "Macro • " else ""
         val srTag = when {
-          result.telemetry.cloudEnhanced -> "Gemini Super-IA • Nuvem"
-          result.telemetry.neuralSrApplied -> "Real-ESRGAN+ 4x (${result.telemetry.acceleratorLabel})"
-          else -> "Óptico Pro • Deconv"
+          result.telemetry.cloudEnhanced -> "${lensPrefix}Gemini Super-IA"
+          result.telemetry.neuralSrApplied -> "${lensPrefix}Real-ESRGAN+ 4x (${result.telemetry.acceleratorLabel})"
+          else -> "${lensPrefix}Óptico Pro • Deconv"
         }
         Text(
           text = "$srTag • ${result.telemetry.outputWidth}×${result.telemetry.outputHeight} • ${result.telemetry.processingTimeMs} ms",

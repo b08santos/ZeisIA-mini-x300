@@ -77,8 +77,6 @@ import androidx.compose.ui.unit.sp
 import com.example.domain.LensProfile
 import com.example.domain.ZoomMath
 import com.example.domain.ZoomMode
-import com.example.ui.theme.DialGlass
-import com.example.ui.theme.InkMuted
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.WarmAmber
 import com.example.ui.theme.ZeissGold
@@ -124,16 +122,15 @@ fun ZeissRotaryZoomControl(
 
   val stops = remember(hardwareMinZoom, maxZoom) {
     val allStops = buildList {
-      if (hardwareMinZoom <= 0.7f) add(DialStop(0.6f, "14"))
-      add(DialStop(1f, "24"))
-      add(DialStop(1.5f, "35"))
-      add(DialStop(2.1f, "50"))
-      add(DialStop(3.7f, "85"))
-      add(DialStop(7.4f, "178"))
-      add(DialStop(10f, "240"))
-      add(DialStop(30f, "30x"))
-      add(DialStop(50f, "50x"))
-      add(DialStop(100f, "100x"))
+      if (hardwareMinZoom <= 0.7f) add(DialStop(0.6f, "0,6"))
+      add(DialStop(1f, "1"))
+      add(DialStop(1.5f, "1,5"))
+      add(DialStop(3.7f, "3,7"))
+      add(DialStop(7.4f, "7,4"))
+      add(DialStop(10f, "10"))
+      add(DialStop(20f, "20"))
+      add(DialStop(50f, "50"))
+      add(DialStop(100f, "100"))
     }
     allStops.filter { it.zoom <= maxZoom + 0.05f }
   }
@@ -214,7 +211,7 @@ fun ZeissRotaryZoomControl(
   val textPaint = remember(density) {
     Paint(Paint.ANTI_ALIAS_FLAG).apply {
       textAlign = Paint.Align.CENTER
-      typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+      typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
     }
   }
 
@@ -301,7 +298,7 @@ fun ZeissRotaryZoomControl(
       .widthIn(max = 540.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    // Semi-Circular Zeiss Half-Moon Dial — unfolds smoothly when dragging across zoom numbers
+    // Semi-Circular Vivo X300 Half-Moon Dial — unfolds smoothly when dragging across zoom numbers
     val stopAngles = remember(stops, hardwareMinZoom, maxZoom) {
       val span = if (maxZoom <= 12f) 96f else 132f
       stops.map { stop ->
@@ -333,43 +330,26 @@ fun ZeissRotaryZoomControl(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth(),
       ) {
-        // Live focal readout right above the half-moon apex needle (e.g. "85mm • 3,7x")
-        Box(
-          modifier = Modifier.liquidGlassBubble(
-            shape = RoundedCornerShape(50),
-            active = true,
-            activeColor = accentColor,
-            baseBlackAlpha = 0.78f,
+        // Vivo X300 style clean floating yellow zoom readout directly above the center needle (no box/pill)
+        Text(
+          text = formatPtZoom(displayZoom),
+          style = MaterialTheme.typography.titleMedium.copy(
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            shadow = androidx.compose.ui.graphics.Shadow(
+              color = Color.Black.copy(alpha = 0.72f),
+              offset = Offset(0f, 2f),
+              blurRadius = 8f,
+            ),
           ),
-        ) {
-          Row(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-          ) {
-            Text(
-              text = ZoomMath.formatFocalMmLabel(displayZoom),
-              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-              color = accentColor,
-            )
-            Text(
-              text = "•",
-              style = MaterialTheme.typography.labelSmall,
-              color = InkMuted,
-            )
-            Text(
-              text = formatPtZoom(displayZoom),
-              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-              color = Color.White,
-            )
-          }
-        }
+          color = accentColor,
+          modifier = Modifier.padding(bottom = 2.dp),
+        )
 
         Box(
           modifier = Modifier
             .fillMaxWidth()
-            .height(108.dp)
-            .padding(horizontal = 8.dp)
+            .height(92.dp)
             .clipToBounds()
             .horizontalDialScrub(expandOnDrag = false),
           contentAlignment = Alignment.BottomCenter,
@@ -382,83 +362,91 @@ fun ZeissRotaryZoomControl(
             val currentAngleOffsetDeg = currentFrac * totalSpanDeg
 
             val centerX = size.width / 2f
-            val radius = (size.width * 0.56f).coerceAtLeast(size.height * 1.45f)
-            val centerY = size.height * 0.14f + radius
+            val radius = (size.width * 0.62f).coerceAtLeast(size.height * 1.85f)
+            val centerY = size.height * 0.12f + radius
 
+            // Sleek translucent smoked-black half-moon band matching the bottom zoom bar
             drawCircle(
-              brush = Brush.radialGradient(
-                colors = listOf(
-                  DialGlass.copy(alpha = 0.90f),
-                  DialGlass.copy(alpha = 0.70f),
-                  Color.Transparent,
+              brush = Brush.verticalGradient(
+                colorStops = arrayOf(
+                  0.0f to Color(0xFF0A0A0C).copy(alpha = 0.64f),
+                  0.65f to Color(0xFF0A0A0C).copy(alpha = 0.48f),
+                  1.0f to Color(0xFF0A0A0C).copy(alpha = 0.18f),
                 ),
-                center = Offset(centerX, centerY),
-                radius = radius,
+                startY = centerY - radius,
+                endY = size.height,
               ),
               radius = radius,
               center = Offset(centerX, centerY),
             )
 
+            // Ultra-subtle dark glass top rim fading cleanly at left & right edges
             drawCircle(
-              color = Color.White.copy(alpha = 0.24f),
-              radius = radius - 1.dp.toPx(),
+              brush = Brush.horizontalGradient(
+                colors = listOf(
+                  Color.Transparent,
+                  Color.White.copy(alpha = 0.18f),
+                  Color.Transparent,
+                ),
+              ),
+              radius = radius - 0.75.dp.toPx(),
               center = Offset(centerX, centerY),
               style = Stroke(width = 1.dp.toPx()),
             )
 
-            val tickCount = 60
+            val tickCount = 72
             for (i in 0..tickCount) {
               val stopFrac = i.toFloat() / tickCount
               val relDeg = stopFrac * totalSpanDeg - currentAngleOffsetDeg
-              if (abs(relDeg) > 54f) continue
+              if (abs(relDeg) > 48f) continue
 
               val rad = ((-90f + relDeg) * PI / 180.0)
               val cosA = cos(rad).toFloat()
               val sinA = sin(rad).toFloat()
 
-              val isMajorTick = i % 5 == 0
-              val outerR = radius - 6.dp.toPx()
-              val innerR = radius - (if (isMajorTick) 17.dp.toPx() else 12.dp.toPx())
+              val isMajorTick = i % 6 == 0
+              val outerR = radius - 4.dp.toPx()
+              val innerR = radius - (if (isMajorTick) 15.dp.toPx() else 10.dp.toPx())
 
-              val fade = (1f - (abs(relDeg) / 54f)).coerceIn(0.15f, 1f)
+              val fade = (1f - (abs(relDeg) / 48f)).coerceIn(0f, 1f)
               drawLine(
-                color = Color.White.copy(alpha = (if (isMajorTick) 0.72f else 0.34f) * fade),
+                color = Color.White.copy(alpha = (if (isMajorTick) 0.75f else 0.34f) * fade),
                 start = Offset(centerX + cosA * innerR, centerY + sinA * innerR),
                 end = Offset(centerX + cosA * outerR, centerY + sinA * outerR),
-                strokeWidth = if (isMajorTick) 1.6.dp.toPx() else 1.dp.toPx(),
+                strokeWidth = if (isMajorTick) 1.4.dp.toPx() else 0.9.dp.toPx(),
                 cap = StrokeCap.Round,
               )
             }
 
-            textPaint.textSize = with(density) { 11.sp.toPx() }
+            textPaint.textSize = with(density) { 11.5.sp.toPx() }
             for ((label, stopAngleDeg) in stopAngles) {
               val relDeg = stopAngleDeg - currentAngleOffsetDeg
-              if (abs(relDeg) > 50f) continue
+              if (abs(relDeg) > 44f) continue
 
               val rad = ((-90f + relDeg) * PI / 180.0)
               val cosA = cos(rad).toFloat()
               val sinA = sin(rad).toFloat()
 
-              val tickOuter = radius - 6.dp.toPx()
-              val tickInner = radius - 22.dp.toPx()
-              val isNearCenter = abs(relDeg) < 4.5f
-              val fade = (1f - (abs(relDeg) / 50f)).coerceIn(0.2f, 1f)
+              val tickOuter = radius - 4.dp.toPx()
+              val tickInner = radius - 17.dp.toPx()
+              val isNearCenter = abs(relDeg) < 4.2f
+              val fade = (1f - (abs(relDeg) / 44f)).coerceIn(0f, 1f)
 
               drawLine(
-                color = if (isNearCenter) accentColor else Color.White.copy(alpha = 0.85f * fade),
+                color = if (isNearCenter) accentColor else Color.White.copy(alpha = 0.88f * fade),
                 start = Offset(centerX + cosA * tickInner, centerY + sinA * tickInner),
                 end = Offset(centerX + cosA * tickOuter, centerY + sinA * tickOuter),
-                strokeWidth = if (isNearCenter) 2.2.dp.toPx() else 1.5.dp.toPx(),
+                strokeWidth = if (isNearCenter) 2.dp.toPx() else 1.4.dp.toPx(),
                 cap = StrokeCap.Round,
               )
 
-              val labelR = radius - 34.dp.toPx()
+              val labelR = radius - 31.dp.toPx()
               val lx = centerX + cosA * labelR
               val ly = centerY + sinA * labelR + textPaint.textSize * 0.36f
               textPaint.color = if (isNearCenter) {
                 accentColor.toArgb()
               } else {
-                Color.White.copy(alpha = 0.86f * fade).toArgb()
+                Color.White.copy(alpha = 0.88f * fade).toArgb()
               }
 
               drawContext.canvas.nativeCanvas.save()
@@ -467,13 +455,14 @@ fun ZeissRotaryZoomControl(
               drawContext.canvas.nativeCanvas.restore()
             }
 
-            val needleOuter = radius - 2.dp.toPx()
-            val needleInner = radius - 26.dp.toPx()
+            // Vivo X300 crisp golden center needle rising subtly above the rim toward the readout
+            val needleOuter = radius + 2.dp.toPx()
+            val needleInner = radius - 22.dp.toPx()
             drawLine(
               color = accentColor,
               start = Offset(centerX, centerY - needleInner),
               end = Offset(centerX, centerY - needleOuter),
-              strokeWidth = 2.8.dp.toPx(),
+              strokeWidth = 2.4.dp.toPx(),
               cap = StrokeCap.Round,
             )
           }

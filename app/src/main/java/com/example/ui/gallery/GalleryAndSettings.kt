@@ -76,13 +76,13 @@ import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.example.ui.theme.CoralError
-import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.InkMuted
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
 import com.example.ui.theme.OpticalBorder
 import com.example.ui.theme.WarmAmber
+import com.example.ui.theme.ZeissGold
 
 @Composable
 fun GalleryScreen(
@@ -216,7 +216,7 @@ fun GalleryScreen(
           Icon(
             imageVector = Icons.Outlined.PhotoCamera,
             contentDescription = null,
-            tint = ElectricCyan,
+            tint = ZeissGold,
             modifier = Modifier.size(56.dp),
           )
           Text(
@@ -338,7 +338,7 @@ fun GalleryScreen(
               Text(
                 text = badgeText,
                 style = MaterialTheme.typography.labelSmall,
-                color = if (photo.isVideo) ElectricCyan else WarmAmber,
+                color = if (photo.isVideo) WarmAmber else ZeissGold,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
               )
             }
@@ -425,7 +425,7 @@ fun SettingsBottomSheet(
           Icon(
             imageVector = Icons.Outlined.Info,
             contentDescription = null,
-            tint = ElectricCyan,
+            tint = ZeissGold,
             modifier = Modifier.size(22.dp),
           )
           Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -437,7 +437,7 @@ fun SettingsBottomSheet(
             Text(
               text = "Limite nativo da lente/hardware detectado: ${String.format("%.1f", hardwareMaxZoom)}x • Acelerador IA: $aiAcceleratorLabel",
               style = MaterialTheme.typography.labelSmall,
-              color = ElectricCyan,
+              color = ZeissGold,
             )
             Text(
               text = stringResource(R.string.settings_limits_desc),
@@ -486,7 +486,7 @@ private fun SettingToggleRow(
       onCheckedChange = onCheckedChange,
       colors = SwitchDefaults.colors(
         checkedThumbColor = ObsidianBg,
-        checkedTrackColor = ElectricCyan,
+        checkedTrackColor = ZeissGold,
       ),
       modifier = Modifier.testTag(testTag),
     )

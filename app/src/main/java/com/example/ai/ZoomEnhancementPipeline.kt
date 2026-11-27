@@ -51,7 +51,7 @@ class ZoomEnhancementPipeline(
       digitalCropFactor: Float,
       totalZoom: Float = 1f,
     ): Float {
-      return if (totalZoom >= 6f || digitalCropFactor >= 4.5f || fusedLong <= 360) 0.86f else 0.74f
+      return if (totalZoom >= 6f || digitalCropFactor >= 4.5f || fusedLong <= 360) 0.94f else 0.88f
     }
   }
 
@@ -190,7 +190,7 @@ class ZoomEnhancementPipeline(
 
     var neuralSrApplied = false
     val baseSrBitmap = if (shouldRunLocalSr) {
-      val srTargetLong = if (totalZoom >= 8f) 400 else 464
+      val srTargetLong = if (totalZoom >= 8f) 480 else 576
       val srInput = if (fusedLong > srTargetLong) {
         val ratio = srTargetLong.toFloat() / fusedLong
         Bitmap.createScaledBitmap(

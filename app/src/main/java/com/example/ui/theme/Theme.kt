@@ -5,15 +5,15 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
 private val ZoomIADarkColorScheme = darkColorScheme(
-  primary = ElectricCyan,
+  primary = ZeissGold,
   onPrimary = ObsidianBg,
-  primaryContainer = ElectricCyanContainer,
+  primaryContainer = WarmAmberContainer,
   onPrimaryContainer = InkWhite,
   secondary = WarmAmber,
   onSecondary = ObsidianBg,
   secondaryContainer = WarmAmberContainer,
   onSecondaryContainer = InkWhite,
-  tertiary = EmeraldSuccess,
+  tertiary = ZeissGold,
   onTertiary = ObsidianBg,
   background = ObsidianBg,
   onBackground = InkWhite,

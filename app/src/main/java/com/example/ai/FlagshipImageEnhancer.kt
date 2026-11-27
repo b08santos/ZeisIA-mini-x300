@@ -58,11 +58,11 @@ object FlagshipImageEnhancer {
       yPlane
     } else {
       val denoiseStrength = when (preset) {
-        EnhancementPreset.NATURAL -> 0.28f + 0.16f * zoomFactor
-        EnhancementPreset.ULTRA_SHARP -> 0.34f + 0.18f * zoomFactor
-        EnhancementPreset.TEXT_DETAIL -> 0.40f + 0.20f * zoomFactor
+        EnhancementPreset.NATURAL -> 0.26f + 0.16f * zoomFactor
+        EnhancementPreset.ULTRA_SHARP -> 0.32f + 0.18f * zoomFactor
+        EnhancementPreset.TEXT_DETAIL -> 0.36f + 0.20f * zoomFactor
       }
-      bilateralLuma3x3Fast(yPlane, width, height, sigmaRange = 10f + 8f * denoiseStrength)
+      bilateralLuma3x3Fast(yPlane, width, height, sigmaRange = 9f + 7f * denoiseStrength)
     }
 
     // Gentle chroma smoothing suppresses color noise blotches without smearing luma lines
@@ -71,7 +71,18 @@ object FlagshipImageEnhancer {
 
     // 2. Richardson-Lucy Optical Deconvolution: recovers real lens & telephoto micro-detail
     val deconvolvedY = if (neuralSrApplied) {
-      cleanY
+      val srRlBlend = when (preset) {
+        EnhancementPreset.NATURAL -> 0.42f
+        EnhancementPreset.ULTRA_SHARP -> 0.56f
+        EnhancementPreset.TEXT_DETAIL -> 0.68f
+      }
+      deconvolveLumaRL(
+        src = cleanY,
+        width = width,
+        height = height,
+        iterations = 1,
+        blendStrength = srRlBlend,
+      )
     } else {
       val rlIterations = when (preset) {
         EnhancementPreset.NATURAL -> 2
@@ -79,9 +90,9 @@ object FlagshipImageEnhancer {
         EnhancementPreset.TEXT_DETAIL -> 3
       }
       val rlBlend = when (preset) {
-        EnhancementPreset.NATURAL -> 0.52f + 0.15f * zoomFactor
-        EnhancementPreset.ULTRA_SHARP -> 0.72f + 0.18f * zoomFactor
-        EnhancementPreset.TEXT_DETAIL -> 0.88f
+        EnhancementPreset.NATURAL -> 0.58f + 0.16f * zoomFactor
+        EnhancementPreset.ULTRA_SHARP -> 0.78f + 0.15f * zoomFactor
+        EnhancementPreset.TEXT_DETAIL -> 0.90f
       }
       deconvolveLumaRL(
         src = cleanY,
@@ -93,21 +104,21 @@ object FlagshipImageEnhancer {
     }
 
     // 3. Halo-free micro-contrast for architectural, brick, foliage & macro micro-texture depth
-    val macroBoost = if (lensProfile == LensProfile.MACRO_TELE) 0.10f else 0f
+    val macroBoost = if (lensProfile == LensProfile.MACRO_TELE) 0.12f else 0f
     val microContrastStrength = (when (preset) {
-      EnhancementPreset.NATURAL -> 0.16f
-      EnhancementPreset.ULTRA_SHARP -> 0.28f + 0.08f * zoomFactor
-      EnhancementPreset.TEXT_DETAIL -> 0.42f
-    } + macroBoost).coerceAtMost(0.55f)
+      EnhancementPreset.NATURAL -> 0.22f
+      EnhancementPreset.ULTRA_SHARP -> 0.34f + 0.08f * zoomFactor
+      EnhancementPreset.TEXT_DETAIL -> 0.46f
+    } + macroBoost).coerceAtMost(0.60f)
     val texturedY = microContrastDetail(deconvolvedY, width, height, strength = microContrastStrength)
 
     // 4. Contrast Adaptive Sharpening (CAS) with strict local overshoot clamping
     val casMacroBoost = if (lensProfile == LensProfile.MACRO_TELE) 0.08f else 0f
     val casStrength = (when (preset) {
-      EnhancementPreset.NATURAL -> if (neuralSrApplied) 0.25f else 0.36f
-      EnhancementPreset.ULTRA_SHARP -> if (neuralSrApplied) 0.48f else 0.62f
-      EnhancementPreset.TEXT_DETAIL -> if (neuralSrApplied) 0.70f else 0.84f
-    } + casMacroBoost).coerceAtMost(0.92f)
+      EnhancementPreset.NATURAL -> if (neuralSrApplied) 0.38f else 0.44f
+      EnhancementPreset.ULTRA_SHARP -> if (neuralSrApplied) 0.60f else 0.70f
+      EnhancementPreset.TEXT_DETAIL -> if (neuralSrApplied) 0.80f else 0.88f
+    } + casMacroBoost).coerceAtMost(0.95f)
     val sharpY = contrastAdaptiveSharpen(texturedY, width, height, strength = casStrength)
 
     // 5. Filmic black-point & highlight-safe S-curve LUT + balanced vibrance

@@ -82,12 +82,12 @@ import com.example.ui.camera.CameraViewfinderScreen
 import com.example.ui.gallery.GalleryScreen
 import com.example.ui.gallery.SettingsBottomSheet
 import com.example.ui.result.EnhancementResultScreen
-import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.InkMuted
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
 import com.example.ui.theme.OpticalBorder
+import com.example.ui.theme.ZeissGold
 import com.example.ui.theme.ZoomIATheme
 
 class MainActivity : ComponentActivity() {
@@ -297,25 +297,25 @@ private fun CameraPermissionGate(
             .size(72.dp)
             .clip(CircleShape)
             .background(ObsidianSurfaceHigh)
-            .border(1.dp, ElectricCyan.copy(alpha = 0.5f), CircleShape),
+            .border(1.dp, ZeissGold.copy(alpha = 0.5f), CircleShape),
           contentAlignment = Alignment.Center,
         ) {
           Icon(
             imageVector = Icons.Outlined.CameraAlt,
             contentDescription = null,
-            tint = ElectricCyan,
+            tint = ZeissGold,
             modifier = Modifier.size(34.dp),
           )
         }
 
         Surface(
-          color = ElectricCyan.copy(alpha = 0.14f),
+          color = ZeissGold.copy(alpha = 0.14f),
           shape = RoundedCornerShape(50),
         ) {
           Text(
             text = "ZOOM ATÉ 100x • IA OFFLINE NO APARELHO",
             style = MaterialTheme.typography.labelSmall,
-            color = ElectricCyan,
+            color = ZeissGold,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
           )
         }
@@ -369,7 +369,7 @@ private fun CameraPermissionGate(
         Button(
           onClick = if (permanentlyDenied) onOpenSettings else onRequestPermission,
           colors = ButtonDefaults.buttonColors(
-            containerColor = ElectricCyan,
+            containerColor = ZeissGold,
             contentColor = ObsidianBg,
           ),
           shape = RoundedCornerShape(14.dp),
@@ -404,7 +404,7 @@ private fun PermissionFeatureRow(
     Icon(
       imageVector = icon,
       contentDescription = null,
-      tint = ElectricCyan,
+      tint = ZeissGold,
       modifier = Modifier.size(18.dp),
     )
     Text(

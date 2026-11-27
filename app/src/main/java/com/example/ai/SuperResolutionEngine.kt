@@ -77,28 +77,17 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
 
   /**
    * Initializes LiteRT on the confined single thread.
-   * Uses XNNPACK CPU directly on emulators (avoiding EGL/OpenCL driver probe errors)
-   * and prefers GPU with CPU fallback on physical devices.
+   * Real-ESRGAN-x4plus is W8A8 (INT8/UINT8) quantized, so we execute on CPU XNNPACK
+   * (native ARMv9 SDOT/I8MM kernels) rather than GPU (which corrupts 3-channel quantized
+   * tensors into vertical green stripes on Adreno OpenCL/GLES drivers).
    */
   suspend fun warmUp(): String = withContext(liteRtDispatcher) {
     if (initialized && runner != null) return@withContext activeAcceleratorLabel
     val stagedModel = stageModelAsset(appContext)
-    val tryGpuFirst = !isEmulatorDevice()
-
-    if (tryGpuFirst) {
-      try {
-        runner = EsrganPlusRunner(appContext, stagedModel, Accelerator.GPU)
-        activeAcceleratorLabel = "GPU"
-        initialized = true
-        return@withContext activeAcceleratorLabel
-      } catch (_: Throwable) {
-        // Fall through to CPU XNNPACK
-      }
-    }
 
     try {
       runner = EsrganPlusRunner(appContext, stagedModel, Accelerator.CPU)
-      activeAcceleratorLabel = "CPU"
+      activeAcceleratorLabel = "XNNPACK"
     } catch (_: Throwable) {
       runner = null
       activeAcceleratorLabel = "ISP"
@@ -288,7 +277,7 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
           }
           cpuOptions = CompiledModel.CpuOptions(
             numThreads = 4,
-            xnnPackFlags = 0x23,
+            xnnPackFlags = null,
             xnnPackWeightCachePath = cache.path,
           )
         }
@@ -298,11 +287,36 @@ class SuperResolutionEngine(context: Context) : AutoCloseable {
       try {
         inputs += model.createInputBuffers()
         outputs += model.createOutputBuffers()
-        // Warm-up inference so GPU shaders / XNNPACK weights compile off the capture critical path
-        infer(ByteArray(INPUT_ELEMENTS))
+        // Warm-up & self-test against neutral gray patch to verify color integrity (no chroma/stripe corruption)
+        val probe = ByteArray(INPUT_ELEMENTS) { 128.toByte() }
+        val probeOut = infer(probe)
+        verifyProbeHealthy(probeOut)
       } catch (e: Exception) {
         close()
         throw e
+      }
+    }
+
+    private fun verifyProbeHealthy(outTile: ByteArray) {
+      val cy = TILE_OUT / 2
+      val cx = TILE_OUT / 2
+      var prevR = -1
+      var prevG = -1
+      for (dx in -8..8) {
+        val base = (cy * TILE_OUT + (cx + dx)) * 3
+        val r = outTile[base].toInt() and 0xFF
+        val g = outTile[base + 1].toInt() and 0xFF
+        val b = outTile[base + 2].toInt() and 0xFF
+        check(kotlin.math.abs(r - g) < 32 && kotlin.math.abs(g - b) < 32) {
+          "Chroma corruption detected in LiteRT output ($r,$g,$b)"
+        }
+        if (prevR >= 0) {
+          check(kotlin.math.abs(r - prevR) < 32 && kotlin.math.abs(g - prevG) < 32) {
+            "Stripe artifact detected in LiteRT output"
+          }
+        }
+        prevR = r
+        prevG = g
       }
     }
 

@@ -2,6 +2,7 @@ package com.example.ui.camera
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -24,6 +25,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,9 +43,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,7 +78,6 @@ import com.example.domain.LensProfile
 import com.example.domain.ZoomMath
 import com.example.domain.ZoomMode
 import com.example.ui.theme.DialGlass
-import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.InkMuted
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.WarmAmber
@@ -189,16 +193,20 @@ fun ZeissRotaryZoomControl(
     }
   }
 
-  val displayZoom = ZoomMath.sliderToZoom(
-    fraction = animFrac.value,
-    minZoom = hardwareMinZoom,
-    maxZoom = currentMaxZoom,
-  )
+  val displayZoom by remember {
+    derivedStateOf {
+      ZoomMath.sliderToZoom(
+        fraction = animFrac.value,
+        minZoom = currentMinZoom,
+        maxZoom = currentMaxZoom,
+      )
+    }
+  }
   val zoomMode = ZoomMath.classifyZoomMode(displayZoom, hardwareMaxZoom)
   val accentColor = when {
     lensProfile == LensProfile.MACRO_TELE -> ZeissGold
     zoomMode == ZoomMode.OPTICAL -> ZeissGold
-    zoomMode == ZoomMode.HYBRID_AI -> ElectricCyan
+    zoomMode == ZoomMode.HYBRID_AI -> ZeissGold
     else -> WarmAmber
   }
 
@@ -210,14 +218,20 @@ fun ZeissRotaryZoomControl(
     }
   }
 
+  // Gentle, buttery haptic feedback (~16 major steps with 52ms cooldown so fast glides stay silky)
   var lastTickBucket by remember { mutableFloatStateOf(-1f) }
-  val decaySpec = remember { exponentialDecay<Float>(frictionMultiplier = 2.8f) }
+  var lastHapticMs by remember { mutableLongStateOf(0L) }
+  val decaySpec = remember { exponentialDecay<Float>(frictionMultiplier = 1.75f) }
 
   fun emitHapticIfBucketCrossed(frac: Float) {
-    val bucket = (frac * 36f).roundToInt().toFloat()
+    val bucket = (frac * 16f).roundToInt().toFloat()
     if (bucket != lastTickBucket) {
       lastTickBucket = bucket
-      haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+      val now = SystemClock.uptimeMillis()
+      if (now - lastHapticMs >= 52L) {
+        lastHapticMs = now
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+      }
     }
   }
 
@@ -288,18 +302,30 @@ fun ZeissRotaryZoomControl(
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     // Semi-Circular Zeiss Half-Moon Dial — unfolds smoothly when dragging across zoom numbers
+    val stopAngles = remember(stops, hardwareMinZoom, maxZoom) {
+      val span = if (maxZoom <= 12f) 96f else 132f
+      stops.map { stop ->
+        stop.label to (ZoomMath.zoomToSlider(stop.zoom, hardwareMinZoom, maxZoom.coerceAtLeast(hardwareMinZoom + 0.5f)) * span)
+      }
+    }
+
     AnimatedVisibility(
       visible = isDialExpanded,
-      enter = fadeIn(tween(210, easing = FastOutSlowInEasing)) +
-        slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it / 3 } +
+      enter = fadeIn(tween(240, easing = FastOutSlowInEasing)) +
+        slideInVertically(
+          animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+          ),
+        ) { it / 3 } +
         expandVertically(
-          animationSpec = tween(240, easing = FastOutSlowInEasing),
+          animationSpec = tween(260, easing = FastOutSlowInEasing),
           expandFrom = Alignment.Bottom,
         ),
-      exit = fadeOut(tween(180, easing = FastOutSlowInEasing)) +
-        slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { it / 3 } +
+      exit = fadeOut(tween(220, easing = FastOutSlowInEasing)) +
+        slideOutVertically(tween(240, easing = FastOutSlowInEasing)) { it / 3 } +
         shrinkVertically(
-          animationSpec = tween(220, easing = FastOutSlowInEasing),
+          animationSpec = tween(240, easing = FastOutSlowInEasing),
           shrinkTowards = Alignment.Bottom,
         ),
     ) {
@@ -308,10 +334,13 @@ fun ZeissRotaryZoomControl(
         modifier = Modifier.fillMaxWidth(),
       ) {
         // Live focal readout right above the half-moon apex needle (e.g. "85mm • 3,7x")
-        Surface(
-          color = ObsidianBg.copy(alpha = 0.78f),
-          shape = RoundedCornerShape(50),
-          border = BorderStroke(1.dp, accentColor.copy(alpha = 0.65f)),
+        Box(
+          modifier = Modifier.liquidGlassBubble(
+            shape = RoundedCornerShape(50),
+            active = true,
+            activeColor = accentColor,
+            baseBlackAlpha = 0.78f,
+          ),
         ) {
           Row(
             modifier = Modifier.padding(horizontal = 13.dp, vertical = 4.dp),
@@ -345,11 +374,13 @@ fun ZeissRotaryZoomControl(
             .horizontalDialScrub(expandOnDrag = false),
           contentAlignment = Alignment.BottomCenter,
         ) {
-          val currentFrac = animFrac.value
           val totalSpanDeg = if (currentMaxZoom <= 12f) 96f else 132f
-          val currentAngleOffsetDeg = currentFrac * totalSpanDeg
 
           Canvas(modifier = Modifier.fillMaxSize()) {
+            // Read Animatable inside DrawScope so gliding/inertia runs at 120Hz without recomposition
+            val currentFrac = animFrac.value
+            val currentAngleOffsetDeg = currentFrac * totalSpanDeg
+
             val centerX = size.width / 2f
             val radius = (size.width * 0.56f).coerceAtLeast(size.height * 1.45f)
             val centerY = size.height * 0.14f + radius
@@ -357,8 +388,8 @@ fun ZeissRotaryZoomControl(
             drawCircle(
               brush = Brush.radialGradient(
                 colors = listOf(
-                  DialGlass.copy(alpha = 0.88f),
-                  DialGlass.copy(alpha = 0.68f),
+                  DialGlass.copy(alpha = 0.90f),
+                  DialGlass.copy(alpha = 0.70f),
                   Color.Transparent,
                 ),
                 center = Offset(centerX, centerY),
@@ -400,13 +431,8 @@ fun ZeissRotaryZoomControl(
             }
 
             textPaint.textSize = with(density) { 11.sp.toPx() }
-            for (stop in stops) {
-              val stopFrac = ZoomMath.zoomToSlider(
-                zoom = stop.zoom,
-                minZoom = hardwareMinZoom,
-                maxZoom = currentMaxZoom,
-              )
-              val relDeg = stopFrac * totalSpanDeg - currentAngleOffsetDeg
+            for ((label, stopAngleDeg) in stopAngles) {
+              val relDeg = stopAngleDeg - currentAngleOffsetDeg
               if (abs(relDeg) > 50f) continue
 
               val rad = ((-90f + relDeg) * PI / 180.0)
@@ -437,7 +463,7 @@ fun ZeissRotaryZoomControl(
 
               drawContext.canvas.nativeCanvas.save()
               drawContext.canvas.nativeCanvas.rotate(relDeg, lx, ly - textPaint.textSize * 0.36f)
-              drawContext.canvas.nativeCanvas.drawText(stop.label, lx, ly, textPaint)
+              drawContext.canvas.nativeCanvas.drawText(label, lx, ly, textPaint)
               drawContext.canvas.nativeCanvas.restore()
             }
 
@@ -487,8 +513,12 @@ fun ZeissRotaryZoomControl(
     Box(
       modifier = Modifier
         .padding(horizontal = 14.dp, vertical = 2.dp)
-        .clip(RoundedCornerShape(50))
-        .background(ObsidianBg.copy(alpha = 0.42f))
+        .liquidGlassBubble(
+          shape = RoundedCornerShape(50),
+          active = isDialExpanded,
+          activeColor = accentColor,
+          baseBlackAlpha = 0.58f,
+        )
         .horizontalDialScrub(expandOnDrag = true)
         .testTag("zoom_slider"),
       contentAlignment = Alignment.Center,
@@ -500,15 +530,21 @@ fun ZeissRotaryZoomControl(
       ) {
         quickButtons.forEach { (presetZoom, baseLabel) ->
           val isSelected = matchesPreset && closestStopZoom == presetZoom
+          val pillInteraction = remember { MutableInteractionSource() }
+          val isPillPressed by pillInteraction.collectIsPressedAsState()
           val labelColor by animateColorAsState(
             targetValue = if (isSelected) accentColor else Color.White.copy(alpha = 0.88f),
             animationSpec = tween(200, easing = FastOutSlowInEasing),
             label = "zoom_label_color",
           )
           val labelScale by animateFloatAsState(
-            targetValue = if (isSelected) 1.08f else 1.0f,
+            targetValue = when {
+              isPillPressed -> 0.84f
+              isSelected -> 1.09f
+              else -> 1.0f
+            },
             animationSpec = spring(
-              dampingRatio = Spring.DampingRatioMediumBouncy,
+              dampingRatio = 0.44f,
               stiffness = Spring.StiffnessMediumLow,
             ),
             label = "zoom_label_scale",
@@ -521,7 +557,11 @@ fun ZeissRotaryZoomControl(
           Box(
             modifier = Modifier
               .clip(RoundedCornerShape(50))
-              .clickable(enabled = enabled) {
+              .clickable(
+                interactionSource = pillInteraction,
+                indication = null,
+                enabled = enabled,
+              ) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 val destFrac = ZoomMath.zoomToSlider(
                   zoom = presetZoom,

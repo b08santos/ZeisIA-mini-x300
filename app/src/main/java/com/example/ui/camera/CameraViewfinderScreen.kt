@@ -137,7 +137,6 @@ import com.example.domain.ZoomMath
 import com.example.ui.CameraUiState
 import com.example.ui.ProcessingPhase
 import com.example.ui.theme.CoralError
-import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
@@ -205,12 +204,12 @@ fun CameraViewfinderScreen(
     }
   }
 
-  // Smooth interpolated digital magnification so pinch, preset taps, and mode switches glide smoothly
+  // Smooth interpolated digital magnification locked closely to the 120Hz half-moon dial
   val smoothDigitalCrop by animateFloatAsState(
     targetValue = uiState.digitalCropFactor,
     animationSpec = spring(
       dampingRatio = Spring.DampingRatioNoBouncy,
-      stiffness = Spring.StiffnessMedium,
+      stiffness = Spring.StiffnessHigh,
     ),
     label = "smooth_digital_crop",
   )
@@ -616,52 +615,35 @@ fun CameraViewfinderScreen(
             Icon(
               imageVector = if (uiState.settings.gridEnabled) Icons.Outlined.GridOn else Icons.Outlined.GridOff,
               contentDescription = stringResource(R.string.cd_grid),
-              tint = if (uiState.settings.gridEnabled) ElectricCyan else Color.White,
+              tint = if (uiState.settings.gridEnabled) ZeissGold else Color.White,
               modifier = Modifier.size(19.dp),
             )
           }
 
           if (uiState.captureMode == CaptureMode.PHOTO) {
             val isMacro = uiState.lensProfile == LensProfile.MACRO_TELE
-            val macroBg by animateColorAsState(
-              targetValue = if (isMacro) ZeissGold.copy(alpha = 0.22f) else ObsidianSurface.copy(alpha = 0.78f),
-              animationSpec = tween(220, easing = FastOutSlowInEasing),
-              label = "macro_bg",
-            )
-            val macroBorder by animateColorAsState(
-              targetValue = if (isMacro) ZeissGold else OpticalBorder,
-              animationSpec = tween(220, easing = FastOutSlowInEasing),
-              label = "macro_border",
-            )
             val macroTint by animateColorAsState(
               targetValue = if (isMacro) ZeissGold else Color.White,
               animationSpec = tween(220, easing = FastOutSlowInEasing),
               label = "macro_tint",
             )
-            val macroScale by animateFloatAsState(
-              targetValue = if (isMacro) 1.04f else 1.0f,
-              animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium,
-              ),
-              label = "macro_scale",
-            )
-            Surface(
-              color = macroBg,
-              shape = RoundedCornerShape(50),
-              border = BorderStroke(1.dp, macroBorder),
+            Box(
               modifier = Modifier
                 .height(42.dp)
-                .graphicsLayer {
-                  scaleX = macroScale
-                  scaleY = macroScale
-                }
-                .clip(RoundedCornerShape(50))
-                .clickable(enabled = !isBusy, onClick = onToggleLensProfile)
+                .liquidGlassBubble(
+                  shape = RoundedCornerShape(50),
+                  enabled = !isBusy,
+                  active = isMacro,
+                  activeColor = ZeissGold,
+                  baseBlackAlpha = 0.72f,
+                  pressedScale = 0.87f,
+                  onClick = onToggleLensProfile,
+                )
                 .testTag("lens_profile_button"),
+              contentAlignment = Alignment.Center,
             ) {
               Row(
-                modifier = Modifier.padding(horizontal = 11.dp),
+                modifier = Modifier.padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
               ) {
@@ -697,22 +679,26 @@ fun CameraViewfinderScreen(
             uiState.samsungExtensionActive -> "SAMSUNG HDR"
             else -> "OFFLINE ${uiState.aiAcceleratorLabel}"
           }
-          Surface(
-            color = ObsidianSurface.copy(alpha = 0.78f),
-            shape = RoundedCornerShape(50),
-            border = BorderStroke(1.dp, OpticalBorder),
+          Box(
+            modifier = Modifier.liquidGlassBubble(
+              shape = RoundedCornerShape(50),
+              active = uiState.captureMode == CaptureMode.VIDEO || uiState.settings.cloudAiEnabled,
+              activeColor = ZeissGold,
+              baseBlackAlpha = 0.70f,
+            ),
+            contentAlignment = Alignment.Center,
           ) {
             Text(
               text = engineLabel,
               style = MaterialTheme.typography.labelSmall,
               color = when {
                 uiState.captureMode == CaptureMode.VIDEO -> ZeissGold
-                uiState.settings.cloudAiEnabled -> ElectricCyan
-                else -> Color.White.copy(alpha = 0.9f)
+                uiState.settings.cloudAiEnabled -> ZeissGold
+                else -> Color.White.copy(alpha = 0.92f)
               },
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
             )
           }
 
@@ -822,10 +808,14 @@ fun CameraViewfinderScreen(
           Box(
             modifier = Modifier
               .size(50.dp)
-              .clip(RoundedCornerShape(12.dp))
-              .background(ObsidianSurfaceHigh)
-              .border(1.5.dp, OpticalBorder, RoundedCornerShape(12.dp))
-              .clickable(enabled = !isBusy && !isRecording, onClick = onOpenGallery)
+              .liquidGlassBubble(
+                shape = RoundedCornerShape(12.dp),
+                enabled = !isBusy && !isRecording,
+                baseBlackAlpha = 0.72f,
+                borderWidth = 1.2.dp,
+                pressedScale = 0.86f,
+                onClick = onOpenGallery,
+              )
               .testTag("gallery_button"),
             contentAlignment = Alignment.Center,
           ) {
@@ -846,15 +836,15 @@ fun CameraViewfinderScreen(
           }
         }
 
-        // Center: Vivo/Zeiss Concentric Shutter / Video Record Ring with tactile spring + smooth REC morph
+        // Center: Vivo/Zeiss Concentric Shutter / Video Record Ring with Apple bubble pop + smooth REC morph
         val isVideoMode = uiState.captureMode == CaptureMode.VIDEO
         val shutterInteraction = remember { MutableInteractionSource() }
         val isShutterPressed by shutterInteraction.collectIsPressedAsState()
         val shutterScale by animateFloatAsState(
-          targetValue = if (isShutterPressed) 0.89f else 1.0f,
+          targetValue = if (isShutterPressed) 0.87f else 1.0f,
           animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium,
+            dampingRatio = 0.44f,
+            stiffness = Spring.StiffnessMediumLow,
           ),
           label = "shutter_press_scale",
         )
@@ -972,44 +962,24 @@ fun CameraViewfinderScreen(
         ) {
           if (uiState.captureMode == CaptureMode.PHOTO && !isRecording) {
             val aiOn = uiState.settings.cloudAiEnabled
-            val aiBg by animateColorAsState(
-              targetValue = if (aiOn) ElectricCyan.copy(alpha = 0.22f) else ObsidianSurfaceHigh,
-              animationSpec = tween(220, easing = FastOutSlowInEasing),
-              label = "ai_btn_bg",
-            )
-            val aiBorder by animateColorAsState(
-              targetValue = if (aiOn) ElectricCyan else OpticalBorder,
-              animationSpec = tween(220, easing = FastOutSlowInEasing),
-              label = "ai_btn_border",
-            )
             val aiTint by animateColorAsState(
-              targetValue = if (aiOn) ElectricCyan else Color.White.copy(alpha = 0.85f),
+              targetValue = if (aiOn) ZeissGold else Color.White.copy(alpha = 0.88f),
               animationSpec = tween(220, easing = FastOutSlowInEasing),
               label = "ai_btn_tint",
-            )
-            val aiScale by animateFloatAsState(
-              targetValue = if (aiOn) 1.05f else 1.0f,
-              animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium,
-              ),
-              label = "ai_btn_scale",
             )
             Box(
               modifier = Modifier
                 .size(48.dp)
-                .graphicsLayer {
-                  scaleX = aiScale
-                  scaleY = aiScale
-                }
-                .clip(CircleShape)
-                .background(aiBg)
-                .border(
-                  width = 1.5.dp,
-                  color = aiBorder,
+                .liquidGlassBubble(
                   shape = CircleShape,
+                  enabled = !isBusy,
+                  active = aiOn,
+                  activeColor = ZeissGold,
+                  baseBlackAlpha = 0.72f,
+                  borderWidth = 1.2.dp,
+                  pressedScale = 0.86f,
+                  onClick = onToggleCloudAiQuick,
                 )
-                .clickable(enabled = !isBusy, onClick = onToggleCloudAiQuick)
                 .testTag("quick_ai_button"),
               contentAlignment = Alignment.Center,
             ) {
@@ -1035,10 +1005,14 @@ fun CameraViewfinderScreen(
           Box(
             modifier = Modifier
               .size(48.dp)
-              .clip(CircleShape)
-              .background(ObsidianSurfaceHigh)
-              .border(1.5.dp, OpticalBorder, CircleShape)
-              .clickable(enabled = !isBusy && !isRecording, onClick = onToggleLens)
+              .liquidGlassBubble(
+                shape = CircleShape,
+                enabled = !isBusy && !isRecording,
+                baseBlackAlpha = 0.72f,
+                borderWidth = 1.2.dp,
+                pressedScale = 0.86f,
+                onClick = onToggleLens,
+              )
               .testTag("flip_camera_button"),
             contentAlignment = Alignment.Center,
           ) {
@@ -1063,14 +1037,14 @@ fun CameraViewfinderScreen(
       Surface(
         color = ObsidianSurface.copy(alpha = 0.94f),
         shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, ZeissGold.copy(alpha = 0.55f)),
       ) {
         Column(
           modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-          CircularProgressIndicator(color = ElectricCyan, strokeWidth = 3.dp)
+          CircularProgressIndicator(color = ZeissGold, strokeWidth = 3.dp)
           Text(
             text = when (uiState.processingPhase) {
               ProcessingPhase.CAPTURING_BURST -> stringResource(R.string.processing_capturing_burst)
@@ -1262,6 +1236,16 @@ private fun VivoModeTab(
   onClick: () -> Unit,
   testTag: String,
 ) {
+  val tabInteraction = remember { MutableInteractionSource() }
+  val isTabPressed by tabInteraction.collectIsPressedAsState()
+  val tabScale by animateFloatAsState(
+    targetValue = if (isTabPressed) 0.88f else 1.0f,
+    animationSpec = spring(
+      dampingRatio = 0.44f,
+      stiffness = Spring.StiffnessMediumLow,
+    ),
+    label = "mode_tab_scale",
+  )
   val textColor by animateColorAsState(
     targetValue = if (selected) ZeissGold else Color.White.copy(alpha = 0.65f),
     animationSpec = tween(220, easing = FastOutSlowInEasing),
@@ -1280,8 +1264,17 @@ private fun VivoModeTab(
     verticalArrangement = Arrangement.spacedBy(4.dp),
     modifier = Modifier
       .minimumInteractiveComponentSize()
+      .graphicsLayer {
+        scaleX = tabScale
+        scaleY = tabScale
+      }
       .clip(RoundedCornerShape(12.dp))
-      .clickable(enabled = enabled, onClick = onClick)
+      .clickable(
+        interactionSource = tabInteraction,
+        indication = null,
+        enabled = enabled,
+        onClick = onClick,
+      )
       .padding(horizontal = 12.dp, vertical = 6.dp)
       .testTag(testTag),
   ) {
@@ -1308,13 +1301,17 @@ private fun HudIconButton(
   contentDescription: String,
   content: @Composable () -> Unit,
 ) {
-  IconButton(
-    onClick = onClick,
+  Box(
     modifier = Modifier
       .size(48.dp)
-      .clip(CircleShape)
-      .background(ObsidianSurface.copy(alpha = 0.72f))
+      .liquidGlassBubble(
+        shape = CircleShape,
+        baseBlackAlpha = 0.68f,
+        pressedScale = 0.85f,
+        onClick = onClick,
+      )
       .testTag(testTag),
+    contentAlignment = Alignment.Center,
   ) {
     content()
   }

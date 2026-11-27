@@ -67,8 +67,8 @@ class ExampleUnitTest {
     assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 9.0f))
     assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 640, digitalCropFactor = 3.0f, totalZoom = 10.0f))
     assertTrue(ZoomEnhancementPipeline.shouldApplyLocalNeuralSr(fusedLong = 320, digitalCropFactor = 1.0f, totalZoom = 1.0f))
-    assertEquals(0.74f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 4.0f), 0.001f)
-    assertEquals(0.86f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 9.0f), 0.001f)
+    assertEquals(0.88f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 4.0f), 0.001f)
+    assertEquals(0.94f, ZoomEnhancementPipeline.naturalTextureBlendRatio(fusedLong = 1536, digitalCropFactor = 1.0f, totalZoom = 9.0f), 0.001f)
   }
 
   @Test

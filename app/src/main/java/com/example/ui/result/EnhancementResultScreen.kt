@@ -77,7 +77,6 @@ import com.example.domain.EnhancementPreset
 import com.example.domain.LensProfile
 import com.example.domain.ZoomMath
 import com.example.ui.ProcessingPhase
-import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.InkMuted
 import com.example.ui.theme.ObsidianBg
@@ -85,6 +84,7 @@ import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.ObsidianSurfaceHigh
 import com.example.ui.theme.OpticalBorder
 import com.example.ui.theme.WarmAmber
+import com.example.ui.theme.ZeissGold
 import kotlin.math.roundToInt
 
 @Composable
@@ -152,7 +152,7 @@ fun EnhancementResultScreen(
         Text(
           text = "$srTag • ${result.telemetry.outputWidth}×${result.telemetry.outputHeight} • ${result.telemetry.processingTimeMs} ms",
           style = MaterialTheme.typography.labelSmall,
-          color = ElectricCyan,
+          color = ZeissGold,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
@@ -235,7 +235,7 @@ fun EnhancementResultScreen(
             .fillMaxHeight()
             .offset { IntOffset(lineX.roundToInt() - 1, 0) }
             .width(2.dp)
-            .background(ElectricCyan),
+            .background(ZeissGold),
         )
         val handleHalfPx = with(LocalDensity.current) { 20.dp.toPx() }
         Box(
@@ -245,7 +245,7 @@ fun EnhancementResultScreen(
             .size(40.dp)
             .clip(CircleShape)
             .background(ObsidianSurface)
-            .border(2.dp, ElectricCyan, CircleShape)
+            .border(2.dp, ZeissGold, CircleShape)
             .pointerInput(widthPx) {
               detectHorizontalDragGestures { change, dragAmount ->
                 change.consume()
@@ -257,7 +257,7 @@ fun EnhancementResultScreen(
           Icon(
             imageVector = Icons.Outlined.Compare,
             contentDescription = null,
-            tint = ElectricCyan,
+            tint = ZeissGold,
             modifier = Modifier.size(18.dp),
           )
         }
@@ -285,12 +285,12 @@ fun EnhancementResultScreen(
         Surface(
           color = ObsidianBg.copy(alpha = 0.78f),
           shape = RoundedCornerShape(8.dp),
-          border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.5f)),
+          border = BorderStroke(1.dp, ZeissGold.copy(alpha = 0.5f)),
         ) {
           Text(
             text = stringResource(R.string.compare_after),
             style = MaterialTheme.typography.labelSmall,
-            color = ElectricCyan,
+            color = ZeissGold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
           )
         }
@@ -334,7 +334,7 @@ fun EnhancementResultScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
           ) {
-            CircularProgressIndicator(color = ElectricCyan, strokeWidth = 3.dp)
+            CircularProgressIndicator(color = ZeissGold, strokeWidth = 3.dp)
             Text(
               text = stringResource(R.string.processing_enhancing_cloud),
               style = MaterialTheme.typography.labelLarge,
@@ -356,7 +356,7 @@ fun EnhancementResultScreen(
     ) {
       TelemetryBadge(
         text = "${result.telemetry.framesFused}x Burst",
-        accent = if (result.telemetry.framesFused > 1) ElectricCyan else InkMuted,
+        accent = if (result.telemetry.framesFused > 1) ZeissGold else InkMuted,
       )
       TelemetryBadge(
         text = "Óptico ${ZoomMath.formatZoomLabel(result.telemetry.hardwareZoom)}",
@@ -386,9 +386,9 @@ fun EnhancementResultScreen(
       EnhancementPreset.entries.forEach { preset ->
         val selected = result.preset == preset
         Surface(
-          color = if (selected) ElectricCyan else ObsidianSurfaceHigh,
+          color = if (selected) ZeissGold else ObsidianSurfaceHigh,
           shape = RoundedCornerShape(50),
-          border = BorderStroke(1.dp, if (selected) ElectricCyan else OpticalBorder),
+          border = BorderStroke(1.dp, if (selected) ZeissGold else OpticalBorder),
           modifier = Modifier
             .weight(1f)
             .minimumInteractiveComponentSize()
@@ -404,7 +404,7 @@ fun EnhancementResultScreen(
             Icon(
               imageVector = Icons.Outlined.AutoAwesome,
               contentDescription = null,
-              tint = if (selected) ObsidianBg else ElectricCyan,
+              tint = if (selected) ObsidianBg else ZeissGold,
               modifier = Modifier.size(14.dp),
             )
             Spacer(modifier = Modifier.width(4.dp))
@@ -464,7 +464,7 @@ fun EnhancementResultScreen(
         enabled = !isSaving && !isSaved,
         contentPadding = PaddingValues(horizontal = 12.dp),
         colors = ButtonDefaults.buttonColors(
-          containerColor = if (isSaved) EmeraldSuccess else ElectricCyan,
+          containerColor = if (isSaved) EmeraldSuccess else ZeissGold,
           contentColor = ObsidianBg,
           disabledContainerColor = if (isSaved) EmeraldSuccess.copy(alpha = 0.9f) else ObsidianSurfaceHigh,
           disabledContentColor = if (isSaved) ObsidianBg else InkMuted,

@@ -159,6 +159,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 
+private enum class PreviewAspectMode {
+  RATIO_3_4,
+  RATIO_9_16,
+  FULL,
+}
+
 @Composable
 fun CameraViewfinderScreen(
   uiState: CameraUiState,
@@ -357,7 +363,8 @@ fun CameraViewfinderScreen(
   val currentOnMultiplyZoom by androidx.compose.runtime.rememberUpdatedState(onMultiplyZoom)
   val isRecording = uiState.isRecordingVideo
 
-  var fullScreenPreview by remember { mutableStateOf(false) }
+  var aspectMode by remember { mutableStateOf(PreviewAspectMode.RATIO_3_4) }
+  val fullScreenPreview = aspectMode == PreviewAspectMode.FULL
 
   BoxWithConstraints(
     modifier = Modifier
@@ -366,22 +373,30 @@ fun CameraViewfinderScreen(
   ) {
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val topChrome = statusTop + 60.dp
-    val bottomChrome = navBottom + 154.dp
-    val availH = (maxHeight - topChrome - bottomChrome).coerceAtLeast(180.dp)
+    val topChrome = statusTop + 58.dp
+    val deckHeight = 148.dp
+    val baseBottomChrome = navBottom + deckHeight + 14.dp
+    val availH = (maxHeight - topChrome - baseBottomChrome).coerceAtLeast(180.dp)
     val isLandscape = maxWidth > maxHeight
-    val targetAspect = when (uiState.captureMode) {
-      CaptureMode.VIDEO -> if (isLandscape) 16f / 9f else 9f / 16f
-      CaptureMode.PHOTO -> if (isLandscape) 4f / 3f else 3f / 4f
+    val effectiveAspectMode = if (uiState.captureMode == CaptureMode.VIDEO && aspectMode == PreviewAspectMode.RATIO_3_4) {
+      PreviewAspectMode.RATIO_9_16
+    } else {
+      aspectMode
+    }
+    val targetAspect = when (effectiveAspectMode) {
+      PreviewAspectMode.RATIO_9_16 -> if (isLandscape) 16f / 9f else 9f / 16f
+      PreviewAspectMode.RATIO_3_4, PreviewAspectMode.FULL -> if (isLandscape) 4f / 3f else 3f / 4f
     }
 
     val targetFrameW: Dp
     val targetFrameH: Dp
     val targetTopOffset: Dp
-    if (fullScreenPreview) {
+    val targetDeckBottomPad: Dp
+    if (effectiveAspectMode == PreviewAspectMode.FULL) {
       targetFrameW = maxWidth
       targetFrameH = maxHeight
       targetTopOffset = 0.dp
+      targetDeckBottomPad = navBottom + 14.dp
     } else {
       if (maxWidth / targetAspect <= availH) {
         targetFrameW = maxWidth
@@ -390,8 +405,18 @@ fun CameraViewfinderScreen(
         targetFrameH = availH
         targetFrameW = availH * targetAspect
       }
-      targetTopOffset = topChrome + (availH - targetFrameH) / 2f
+      val slack = (availH - targetFrameH).coerceAtLeast(0.dp)
+      val topExtra = (slack * 0.12f).coerceAtMost(16.dp)
+      targetTopOffset = topChrome + topExtra
+      targetDeckBottomPad = navBottom + 14.dp + (slack - topExtra) * 0.58f
     }
+
+    val animDeckBottomPad by animateDpAsState(
+      targetValue = targetDeckBottomPad,
+      animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+      label = "deck_bottom_pad",
+    )
+    val bottomChrome = animDeckBottomPad + deckHeight
 
     val animFrameW by animateDpAsState(
       targetValue = targetFrameW,
@@ -644,9 +669,9 @@ fun CameraViewfinderScreen(
             )
           }
 
-          // Aspect ratio toggle: 3:4 (max 1x wide FOV) <-> Cheia (full-screen edge-to-edge)
+          // Aspect ratio toggle: 3:4 (max 1x wide FOV) -> 9:16 -> Cheia (full-screen edge-to-edge)
           val aspectTint by animateColorAsState(
-            targetValue = if (fullScreenPreview) ZeissGold else Color.White,
+            targetValue = if (effectiveAspectMode != PreviewAspectMode.RATIO_3_4) ZeissGold else Color.White,
             animationSpec = tween(200, easing = FastOutSlowInEasing),
             label = "aspect_tint",
           )
@@ -656,11 +681,21 @@ fun CameraViewfinderScreen(
               .minimumInteractiveComponentSize()
               .liquidGlassBubble(
                 shape = RoundedCornerShape(50),
-                active = fullScreenPreview,
+                active = effectiveAspectMode != PreviewAspectMode.RATIO_3_4,
                 activeColor = ZeissGold,
                 baseBlackAlpha = 0.72f,
                 pressedScale = 0.87f,
-                onClick = { fullScreenPreview = !fullScreenPreview },
+                onClick = {
+                  aspectMode = if (uiState.captureMode == CaptureMode.VIDEO) {
+                    if (aspectMode == PreviewAspectMode.FULL) PreviewAspectMode.RATIO_9_16 else PreviewAspectMode.FULL
+                  } else {
+                    when (aspectMode) {
+                      PreviewAspectMode.RATIO_3_4 -> PreviewAspectMode.RATIO_9_16
+                      PreviewAspectMode.RATIO_9_16 -> PreviewAspectMode.FULL
+                      PreviewAspectMode.FULL -> PreviewAspectMode.RATIO_3_4
+                    }
+                  }
+                },
               )
               .testTag("aspect_ratio_button"),
             contentAlignment = Alignment.Center,
@@ -672,12 +707,20 @@ fun CameraViewfinderScreen(
             ) {
               Icon(
                 imageVector = Icons.Outlined.AspectRatio,
-                contentDescription = if (fullScreenPreview) "Tela Cheia" else "Proporção 3:4",
+                contentDescription = when (effectiveAspectMode) {
+                  PreviewAspectMode.FULL -> "Tela Cheia"
+                  PreviewAspectMode.RATIO_9_16 -> "Proporção 9:16"
+                  PreviewAspectMode.RATIO_3_4 -> "Proporção 3:4"
+                },
                 tint = aspectTint,
                 modifier = Modifier.size(14.dp),
               )
               Text(
-                text = if (fullScreenPreview) "Cheia" else if (uiState.captureMode == CaptureMode.VIDEO) "9:16" else "3:4",
+                text = when (effectiveAspectMode) {
+                  PreviewAspectMode.FULL -> "Cheia"
+                  PreviewAspectMode.RATIO_9_16 -> "9:16"
+                  PreviewAspectMode.RATIO_3_4 -> "3:4"
+                },
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = aspectTint,
                 maxLines = 1,
@@ -833,8 +876,7 @@ fun CameraViewfinderScreen(
       modifier = Modifier
         .fillMaxWidth()
         .align(Alignment.BottomCenter)
-        .navigationBarsPadding()
-        .padding(top = 10.dp, bottom = 14.dp),
+        .padding(top = 8.dp, bottom = animDeckBottomPad),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
 
@@ -1149,7 +1191,7 @@ private fun bindPhotoUseCases(
     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
     .setResolutionStrategy(
       ResolutionStrategy(
-        android.util.Size(1440, 1080),
+        android.util.Size(1920, 1440),
         ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
       ),
     )
@@ -1167,7 +1209,7 @@ private fun bindPhotoUseCases(
     .setResolutionSelector(captureResolutionSelector)
 
   if (useCamera2HqOptions) {
-    applyFlagshipCamera2Isp(Camera2Interop.Extender(previewBuilder))
+    applyPreviewOis(Camera2Interop.Extender(previewBuilder))
     applyFlagshipCamera2Isp(Camera2Interop.Extender(captureBuilder))
   }
 
@@ -1206,7 +1248,7 @@ private fun bindVideoUseCases(
   val videoBuilder = VideoCapture.Builder(recorder)
     .setVideoStabilizationEnabled(true)
 
-  applyFlagshipCamera2Isp(Camera2Interop.Extender(previewBuilder))
+  applyPreviewOis(Camera2Interop.Extender(previewBuilder))
   applyFlagshipCamera2Isp(Camera2Interop.Extender(videoBuilder))
 
   val preview = previewBuilder.build().also { it.surfaceProvider = pv.surfaceProvider }
@@ -1239,6 +1281,17 @@ private fun bindVideoUseCases(
 }
 
 @OptIn(ExperimentalCamera2Interop::class)
+private fun <T> applyPreviewOis(
+  extender: Camera2Interop.Extender<T>,
+) {
+  // Keep native Samsung/OEM Auto-HDR tone curve & color saturation untouched on live preview
+  extender.setCaptureRequestOption(
+    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON,
+  )
+}
+
+@OptIn(ExperimentalCamera2Interop::class)
 private fun <T> applyFlagshipCamera2Isp(
   extender: Camera2Interop.Extender<T>,
 ) {
@@ -1249,14 +1302,6 @@ private fun <T> applyFlagshipCamera2Isp(
   extender.setCaptureRequestOption(
     CaptureRequest.NOISE_REDUCTION_MODE,
     CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY,
-  )
-  extender.setCaptureRequestOption(
-    CaptureRequest.COLOR_CORRECTION_MODE,
-    CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY,
-  )
-  extender.setCaptureRequestOption(
-    CaptureRequest.TONEMAP_MODE,
-    CaptureRequest.TONEMAP_MODE_HIGH_QUALITY,
   )
   extender.setCaptureRequestOption(
     CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,

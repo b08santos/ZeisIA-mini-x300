@@ -501,7 +501,7 @@ fun ZeissRotaryZoomControl(
 
     Box(
       modifier = Modifier
-        .padding(horizontal = 14.dp, vertical = 2.dp)
+        .padding(horizontal = 10.dp, vertical = 2.dp)
         .liquidGlassBubble(
           shape = RoundedCornerShape(50),
           active = isDialExpanded,
@@ -513,8 +513,8 @@ fun ZeissRotaryZoomControl(
       contentAlignment = Alignment.Center,
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(1.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         quickButtons.forEach { (presetZoom, baseLabel) ->
@@ -575,7 +575,7 @@ fun ZeissRotaryZoomControl(
                   }
                 }
               }
-              .padding(horizontal = 9.dp, vertical = 12.dp)
+              .padding(horizontal = 7.dp, vertical = 11.dp)
               .graphicsLayer {
                 scaleX = labelScale
                 scaleY = labelScale
@@ -587,9 +587,11 @@ fun ZeissRotaryZoomControl(
               text = labelText,
               style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                fontSize = 13.sp,
+                fontSize = 12.5.sp,
               ),
               color = labelColor,
+              maxLines = 1,
+              softWrap = false,
             )
           }
         }
